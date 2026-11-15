@@ -1,6 +1,6 @@
 // Service worker: guarda a casca do app (HTML, CSS, JS, ícones) para abrir na hora, inclusive sem rede.
 // Os dados (Firestore) não passam por aqui: o app guarda a última versão por conta própria.
-const VERSION = "ba-v5";
+const VERSION = "ba-v6";
 const SHELL = [
   "./", "index.html", "css/style.css", "manifest.webmanifest",
   "js/app.js", "js/data.js", "js/stats.js", "js/firebase-config.js",

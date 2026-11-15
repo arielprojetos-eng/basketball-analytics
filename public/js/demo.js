@@ -74,7 +74,8 @@ export const demoMeta = (name) => {
       reg: { n: 120, maeSimple: 12.4, maeRecency: 12.6, bias: 0.1, brierModel: 0.239, brierFreq: 0.28 } },
     calibration: [{ lo: 0, hi: 0.2, n: 400, p: 0.12, freq: 0.15 }, { lo: 0.2, hi: 0.4, n: 600, p: 0.3, freq: 0.33 },
       { lo: 0.4, hi: 0.6, n: 800, p: 0.5, freq: 0.49 }, { lo: 0.6, hi: 0.8, n: 600, p: 0.7, freq: 0.66 }, { lo: 0.8, hi: 1, n: 400, p: 0.88, freq: 0.84 }],
-    byComp: [{ name: "Liga Demo A", n: 70, mae: 5.8 }, { name: "Copa Demo B", n: 50, mae: 6.2 }] };
+    byComp: [{ name: "Liga Demo A", n: 70, mae: 5.8 }, { name: "Copa Demo B", n: 50, mae: 6.2 }],
+    calibrationCases: 2800, ece: 0.024, calibrationStatus: "calibrado", leakFree: true };
   if (name === "index") return index;
   if (name === "status") {
     return { lastRun: "2026-11-15T08:17:00+00:00", callsThisRun: 31, usedToday: 62, pending: 38,

@@ -1,4 +1,5 @@
 import unittest
+from collections import defaultdict
 
 from collector import backtest as bt
 from collector import model as M
@@ -52,13 +53,63 @@ class BacktestTests(unittest.TestCase):
 
     def test_sem_vazamento_e_minimo(self):
         t = self.teams(8)
-        pri = bt.compute_priors(bt.collect_games(t))
-        res = bt.run_backtest(t, pri)
+        res = bt.run_backtest(t)
         # só jogos com 3 anteriores de cada lado: jogos 4..8
         self.assertEqual(res["games"], 5)
         self.assertEqual(res["periods"]["q1"]["n"], 5)
         self.assertIn("brierModel", res["periods"]["q3"])
         self.assertEqual(sum(c["n"] for c in res["calibration"]), 5 * len(M.PERIODS) * len(bt.LINE_OFFSETS))
+
+    def test_jogos_futuros_nao_mudam_avaliacao_passada(self):
+        """A avaliação de cada jogo tem de ser idêntica com ou sem os jogos que vieram depois."""
+        def league(k, wild_after=None):
+            teams = {}
+            names = [f"T{i}" for i in range(6)]
+            for t in names:
+                teams[t] = {"games": []}
+            n = 0
+            for day in range(1, k + 1):
+                for x in range(0, 6, 2):
+                    h, a = names[(x + day) % 6], names[(x + day + 1) % 6]
+                    n += 1
+                    base = 20 + (n * 7) % 9
+                    if wild_after and day > wild_after:
+                        base = 5 + (n * 37) % 60  # futuro com dispersão enorme
+                    ph, pa = [base, base + 1, base - 1, base], [base - 2, base, base + 2, base - 1]
+                    sk = f"2026-10-{day:02d}T20:00:00Z|g{n}"
+                    teams[h]["games"].append({"gid": f"g{n}", "sortKey": sk, "cid": "c1", "cname": "L", "home": True,
+                                              "oppId": a, "pts": ph, "oppPts": pa, "ot": 0, "oppOt": 0})
+                    teams[a]["games"].append({"gid": f"g{n}", "sortKey": sk, "cid": "c1", "cname": "L", "home": False,
+                                              "oppId": h, "pts": pa, "oppPts": ph, "ot": 0, "oppOt": 0})
+            return teams
+
+        full, cut = [], []
+        bt.run_backtest(league(28, wild_after=20), trace=full)
+        bt.run_backtest(league(20), trace=cut)
+        self.assertTrue(cut)
+        self.assertEqual(full[:len(cut)], cut)
+
+    def test_prior_comeca_no_padrao_e_ignora_jogos_simultaneos(self):
+        trace = []
+        bt.run_backtest(self.teams(8), trace=trace)
+        first = [x for x in trace if x[0] == trace[0][0]]
+        for gid, k, prior, _, _ in first:
+            self.assertEqual(prior, M.DEFAULT_SD[k])  # sem jogos anteriores suficientes na liga
+
+        # dois jogos no mesmo horário: o segundo não pode usar o primeiro na dispersão
+        st = defaultdict(lambda: defaultdict(bt.Running)); gl = defaultdict(bt.Running)
+        self.assertEqual(bt.walk_forward_prior(st, gl, "c1", "q1"), M.DEFAULT_SD["q1"])
+
+    def test_veredito_de_calibracao(self):
+        few = [{"n": 10, "p": 0.5, "freq": 0.5}]
+        self.assertEqual(bt.calibration_verdict(few)[2], "amostra insuficiente")
+        good = [{"n": 300, "p": 0.3, "freq": 0.31}, {"n": 300, "p": 0.7, "freq": 0.69}]
+        self.assertEqual(bt.calibration_verdict(good)[2], "calibrado")
+        bad = [{"n": 300, "p": 0.3, "freq": 0.45}, {"n": 300, "p": 0.7, "freq": 0.55}]
+        cases, ece, status = bt.calibration_verdict(bad)
+        self.assertEqual((cases, status), (600, "descalibrado"))
+        self.assertAlmostEqual(ece, 0.15)
+        self.assertEqual(bt.calibration_verdict([])[2], "sem dados")
 
     def test_projecao_usa_so_jogos_anteriores(self):
         t = self.teams(4)

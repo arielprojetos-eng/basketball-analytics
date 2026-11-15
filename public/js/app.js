@@ -28,6 +28,10 @@ async function init() {
   $("demoBanner").hidden = !DEMO;
   document.querySelectorAll(".dk").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
   $("btnFilters").addEventListener("click", () => { filtersOpen = !filtersOpen; switchTab(currentTab, true); });
+  const closeSheet = () => { filtersOpen = false; switchTab(currentTab, true); };
+  $("sheetBackdrop").addEventListener("click", closeSheet);
+  $("btnSheetDone").addEventListener("click", closeSheet);
+  setupKeyboardFix();
   switchTab("jogos", true);
 
   if (!CONFIGURED && !DEMO) {
@@ -88,7 +92,8 @@ function switchTab(t, instant) {
     b.classList.toggle("on", on);
     if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
-  $("screenTitleText").textContent = TITLES[t];
+  $("sectionName").textContent = TITLES[t];
+  document.title = `${TITLES[t]} · Basketball Analytics`;
   for (const [k, id] of [["jogos", "tab-jogos"], ["vs", "tab-vs"], ["live", "tab-live"], ["cov", "tab-cov"]]) {
     const el = $(id);
     el.hidden = k !== t;
@@ -97,6 +102,8 @@ function switchTab(t, instant) {
   const match = t === "vs" || t === "live";
   $("matchBar").hidden = !match;
   $("controlsPanel").hidden = !(match && filtersOpen);
+  $("sheetBackdrop").hidden = $("controlsPanel").hidden;
+  document.body.classList.toggle("sheet-open", !$("controlsPanel").hidden);
   $("btnFilters").classList.toggle("on", filtersOpen);
   $("btnFilters").setAttribute("aria-expanded", String(filtersOpen));
   $("fieldPeriod").hidden = t === "live";
@@ -234,10 +241,10 @@ async function render() {
     ${projectionCard(A, B, P, label, sd)}
     ${linesCard(A, B, P, sd)}
     ${scoreboard(ta, tb, A, B, label)}
-    <div class="charts">
+    <section class="block"><h4>Pontos marcados no ${esc(label.toLowerCase())}, jogo a jogo</h4><div class="charts">
       ${chartCard(ta.name, rowsA, A, "a", label)}
       ${chartCard(tb.name, rowsB, B, "b", label)}
-    </div>
+    </div></section>
     ${gamesCard(ta.name, rowsA, "a")}
     ${gamesCard(tb.name, rowsB, "b")}
   </div>`;
@@ -252,14 +259,20 @@ function nBadge(sum) {
 }
 
 function scoreboard(ta, tb, A, B, label) {
-  const side = (t, S, k) => `<div class="side ${k}">
-      <h3>${esc(t.name)}</h3>${nBadge(S)}
-      <div class="big">${f1(S.forAvg)}<small>marcados no ${esc(label.toLowerCase())}</small></div>
-      <div class="mini">
-        <div>${f1(S.againstAvg)}<small>sofridos</small></div>
-        <div>${f1(S.totalAvg)}<small>soma no jogo</small></div>
-      </div></div>`;
-  return `<div class="score">${side(ta, A, "a")}${side(tb, B, "b")}</div>`;
+  const row = (l, a, b, best) => {
+    const ca = best && a != null && b != null ? (best(a, b) ? "lead" : "") : "";
+    const cb = best && a != null && b != null ? (best(b, a) ? "lead" : "") : "";
+    return `<tr><th scope="row">${l}</th><td class="r ${ca}">${a == null ? "–" : f1(a)}</td><td class="r ${cb}">${b == null ? "–" : f1(b)}</td></tr>`;
+  };
+  const nCell = (S) => `<span class="n ${S.n >= state.n ? "" : S.n < 5 ? "bad" : "warn"}">${S.n}${S.n < state.n ? ` de ${state.n}` : ""}</span>`;
+  return `<section class="block"><h4>Equipes no ${esc(label.toLowerCase())}</h4>
+    <table class="cmp"><thead><tr><th></th><th class="r a">${esc(ta.name)}</th><th class="r b">${esc(tb.name)}</th></tr></thead><tbody>
+      ${row("Marcados (média)", A.forAvg, B.forAvg, (x, y) => x > y)}
+      ${row("Sofridos (média)", A.againstAvg, B.againstAvg, (x, y) => x < y)}
+      ${row("Soma no jogo", A.totalAvg, B.totalAvg)}
+      ${row("Desvio da soma", A.totalStd, B.totalStd)}
+      <tr><th scope="row">Jogos na amostra</th><td class="r">${nCell(A)}</td><td class="r">${nCell(B)}</td></tr>
+    </tbody></table></section>`;
 }
 
 function projectionCard(A, B, P, label, sd) {
@@ -292,32 +305,32 @@ function linesCard(A, B, P, sd) {
       <td>${pctCell(pm, "m")}</td><td class="r freq">${pc(pa)}</td><td class="r freq">${pc(pb)}</td></tr>`;
   }).join("");
   return `<div class="card"><h4>Over do total no período</h4>
-    <div class="tw"><table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th><th class="r">Jogos de A</th><th class="r">Jogos de B</th></tr></thead>
+    <div class="tw"><table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th><th class="r" title="Frequência nos jogos da equipe A">Freq. A</th><th class="r" title="Frequência nos jogos da equipe B">Freq. B</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
-    <p class="hint"><b>Chance estimada</b>: curva normal centrada na projeção (linha destacada), com dispersão de ${f1(sd)} pontos, ajustada para o padrão da liga quando há poucos jogos. <b>Jogos de A/B</b>: frequência histórica, ou seja, em quantos jogos de cada equipe a soma passou da linha. Frequência não é probabilidade, e a aba Dados mostra qual das duas acerta mais.</p></div>`;
+    ${calibrated() ? "" : `<div class="calib warn" style="margin-top:10px">Chance estimada ainda não validada pelo backtest. Use como referência, não como probabilidade confirmada.</div>`}
+    <p class="hint"><b>Chance estimada</b>: curva normal centrada na projeção (linha destacada), com dispersão de ${f1(sd)} pontos, ajustada para o padrão da liga quando há poucos jogos. <b>Freq. A/B</b>: frequência histórica, ou seja, em quantos jogos de cada equipe a soma passou da linha. Frequência não é probabilidade, e a aba Dados mostra qual das duas acerta mais.</p></div>`;
 }
 
 function chartCard(name, rows, S, k, label) {
   const chrono = [...rows].reverse();
   const vals = S.forSeries.slice().reverse();
-  if (!vals.length) return `<div class="card chart"><h4>${esc(name)}</h4><div class="empty">Sem jogos.</div></div>`;
-  const W = 340, H = 136, padT = 22, padB = 22, bw = Math.min(26, (W - 20) / vals.length - 4);
-  const max = Math.max(...vals, S.forAvg) * 1.12, min = 0;
-  const x = (i) => 10 + i * ((W - 20) / vals.length) + ((W - 20) / vals.length - bw) / 2;
-  const y = (v) => padT + (H - padT - padB) * (1 - (v - min) / (max - min));
+  if (!vals.length) return `<div class="chart"><div class="chart-h"><b class="${k}">${esc(name)}</b></div><div class="empty">Sem jogos.</div></div>`;
+  const W = 340, H = 110, padT = 8, padB = 18, step = (W - 4) / vals.length, bw = Math.max(3, Math.min(18, step * 0.62));
+  const max = Math.max(...vals, S.forAvg) * 1.1;
+  const x = (i) => 2 + i * step + (step - bw) / 2;
+  const y = (v) => padT + (H - padT - padB) * (1 - v / max);
   const color = k === "a" ? "var(--a)" : "var(--b)";
-  const bars = vals.map((v, i) => `<rect x="${x(i).toFixed(1)}" y="${y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - padB - y(v)).toFixed(1)}" rx="2" fill="${color}" opacity=".85"/>
-    ${vals.length <= 12 ? `<text class="val" x="${(x(i) + bw / 2).toFixed(1)}" y="${(y(v) - 4).toFixed(1)}" text-anchor="middle">${v}</text>` : ""}`).join("");
+  const bars = vals.map((v, i) => `<rect x="${x(i).toFixed(1)}" y="${y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(H - padB - y(v)).toFixed(1)}" rx="1.5" fill="${color}" opacity="${i === vals.length - 1 ? 1 : 0.55}"><title>${v} pontos</title></rect>`).join("");
   const ay = y(S.forAvg).toFixed(1);
-  return `<div class="card chart"><h4>${esc(name)}</h4>
+  const d = (e) => e?.date.slice(5).split("-").reverse().join("/") || "";
+  return `<div class="chart"><div class="chart-h"><b class="${k}">${esc(name)}</b><span>${state.recency ? "média ponderada" : "média"} <b>${f1(S.forAvg)}</b></span></div>
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Pontos marcados no ${esc(label.toLowerCase())} nos últimos ${vals.length} jogos de ${esc(name)}">
+      <line x1="0" x2="${W}" y1="${H - padB}" y2="${H - padB}" stroke="var(--line)"/>
       ${bars}
-      <line x1="6" x2="${W - 6}" y1="${ay}" y2="${ay}" stroke="var(--text)" stroke-dasharray="4 4" opacity=".7"/>
-      <text x="${W - 6}" y="11" text-anchor="end">--- ${state.recency ? "média ponderada" : "média"} ${f1(S.forAvg)}</text>
-      <text x="10" y="${H - 6}">${esc(chrono[0]?.date.slice(5).split("-").reverse().join("/") || "")}</text>
-      <text x="${W - 10}" y="${H - 6}" text-anchor="end">${esc(chrono.at(-1)?.date.slice(5).split("-").reverse().join("/") || "")}</text>
-    </svg>
-    <p class="hint">Pontos marcados no ${esc(label.toLowerCase())}, do jogo mais antigo ao mais recente.</p></div>`;
+      <line x1="0" x2="${W}" y1="${ay}" y2="${ay}" stroke="var(--text)" stroke-width="1" stroke-dasharray="3 4" opacity=".5"/>
+      <text x="0" y="${H - 4}">${esc(d(chrono[0]))}</text>
+      <text x="${W}" y="${H - 4}" text-anchor="end">${esc(d(chrono.at(-1)))} · mais recente</text>
+    </svg></div>`;
 }
 
 function gamesCard(name, rows, k) {
@@ -381,11 +394,12 @@ function renderLive() {
     form.dataset.a = ta.name; form.dataset.b = tb.name;
     form.innerHTML = `<div class="live-head"><span class="a">${esc(ta.name)}</span><span class="b">${esc(tb.name)}</span></div>` +
       liveVals.map((v, i) => `<div class="live-row"><label for="la${i}">${i + 1}º quarto</label>
-        <input id="la${i}" data-i="${i}" data-s="a" class="sc a" type="number" inputmode="numeric" min="0" max="99" placeholder="A" value="${esc(v.a)}">
-        <input id="lb${i}" data-i="${i}" data-s="b" class="sc b" type="number" inputmode="numeric" min="0" max="99" placeholder="B" value="${esc(v.b)}"></div>`).join("") +
+        <input id="la${i}" data-i="${i}" data-s="a" class="sc a" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" enterkeyhint="next" autocomplete="off" placeholder="A" value="${esc(v.a)}">
+        <input id="lb${i}" data-i="${i}" data-s="b" class="sc b" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" enterkeyhint="${i === 2 ? "done" : "next"}" autocomplete="off" placeholder="B" value="${esc(v.b)}"></div>`).join("") +
       `<p class="hint" style="margin:10px 0 0">Preencha os quartos já encerrados, em ordem. A projeção usa a amostra e os filtros acima.</p>`;
     form.oninput = (e) => {
       const el = e.target.closest("input"); if (!el) return;
+      el.value = el.value.replace(/\D/g, "").slice(0, 2);
       liveVals[+el.dataset.i][el.dataset.s] = el.value;
       renderLiveResult();
     };
@@ -437,18 +451,34 @@ function renderLiveResult() {
       <table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th></tr></thead><tbody>${lineRows(nq.total, nq.sd, nq.total)}</tbody></table></div>
     <div class="card"><h4>Over do total final</h4>
       <table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th></tr></thead><tbody>${lineRows(R.finalTotal, R.sdFinal, R.finalTotal)}</tbody></table>
+      ${calibrated() ? "" : `<div class="calib warn" style="margin-top:10px">Chances ainda não validadas pelo backtest.</div>`}
       <p class="hint">Probabilidade pela curva normal, com a incerteza dos quartos que faltam. Prorrogação não entra. É uma estimativa estatística e pode errar, sobretudo com poucos jogos na amostra.</p></div>
   </div>`;
 }
 
 
 // ---------- precisão do modelo (backtest) ----------
+const CAL_TXT = {
+  "calibrado": ["ok", "Chances calibradas: o previsto bate com o que aconteceu"],
+  "aceitável": ["warn", "Chances aceitáveis: pequeno desvio entre previsto e realizado"],
+  "descalibrado": ["bad", "Chances descalibradas: não use os percentuais como probabilidade"],
+  "amostra insuficiente": ["warn", "Calibração ainda não verificada: amostra insuficiente"],
+  "sem dados": ["warn", "Calibração ainda não verificada: sem jogos avaliados"],
+};
+function calibrationLine(bt) {
+  const st = bt?.calibrationStatus || "sem dados";
+  const [cls, txt] = CAL_TXT[st] || CAL_TXT["sem dados"];
+  const ece = bt?.ece != null ? ` · erro de calibração ${(bt.ece * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} p.p.` : "";
+  const cases = bt?.calibrationCases ? ` · ${bt.calibrationCases} casos (mínimo ${bt.params?.minCalibCases ?? 500})` : "";
+  return `<div class="calib ${cls}">${txt}${ece}${cases}</div>`;
+}
+const calibrated = () => ["calibrado", "aceitável"].includes(backtestRes?.calibrationStatus);
 const PLABEL = { q1: "1º quarto", q2: "2º quarto", q3: "3º quarto", q4: "4º quarto", h1: "1º tempo", h2: "2º tempo", reg: "Jogo (regulamentar)" };
 
 function precisionCard(bt) {
   const head = `<div class="card" style="margin-bottom:14px"><h4>Precisão do modelo (backtest)</h4>`;
   if (!bt || !bt.games) {
-    return head + `<p class="hint" style="margin:0">Ainda sem jogos suficientes para avaliar. O teste roda uma vez por dia e só avalia jogos em que as duas equipes já tinham pelo menos ${bt?.params?.minPrior ?? 3} jogos anteriores na mesma liga. Com o histórico crescendo dia a dia, os primeiros números aparecem em alguns dias.</p></div>`;
+    return head + calibrationLine(bt) + `<p class="hint" style="margin:0">Ainda sem jogos suficientes para avaliar. O teste roda uma vez por dia e só avalia jogos em que as duas equipes já tinham pelo menos ${bt?.params?.minPrior ?? 3} jogos anteriores na mesma liga. Com o histórico crescendo dia a dia, os primeiros números aparecem em alguns dias.</p></div>`;
   }
   const rows = Object.entries(PLABEL).map(([k, l]) => {
     const d = bt.periods?.[k];
@@ -465,7 +495,8 @@ function precisionCard(bt) {
   const cal = (bt.calibration || []).filter((c) => c.n).map((c) =>
     `<tr><td>${Math.round(c.lo * 100)}–${Math.round(c.hi * 100)}%</td><td class="r">${c.n}</td><td class="r">${pc(c.p * 100)}</td><td class="r">${pc(c.freq * 100)}</td></tr>`).join("");
   const comps = (bt.byComp || []).map((c) => `<tr><td>${esc(c.name)}</td><td class="r">${c.n}</td><td class="r">${f1(c.mae)}</td></tr>`).join("");
-  return head + `<p class="hint" style="margin:0 0 10px">${bt.games} jogos avaliados. Cada projeção usou só os jogos anteriores ao jogo avaliado (últimos ${bt.params.lastN}, mesma liga). Atualizado em ${esc(new Date(bt.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }))}.</p>
+  const verdict = calibrationLine(bt);
+  return head + verdict + `<p class="hint" style="margin:0 0 10px">${bt.games} jogos avaliados. Cada projeção usou só os jogos anteriores ao jogo avaliado (últimos ${bt.params.lastN}, mesma liga). Atualizado em ${esc(new Date(bt.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }))}.</p>
     <div class="plist">${rows}</div>
     <p class="hint"><b>Erro médio</b>: diferença média, em pontos, entre a projeção e o total real (menor é melhor; o melhor método de cada linha fica em verde). <b>Viés</b> positivo indica que o modelo projeta acima do real. <b>Brier</b> mede a qualidade das chances de Over (0 é perfeito; 0,25 equivale a chutar 50%) e compara a chance estimada do modelo com a frequência histórica.</p>
     ${cal ? `<h4 style="margin-top:14px">Calibração das chances</h4><div class="tw"><table><thead><tr><th>Faixa prevista</th><th class="r">Casos</th><th class="r">Média prevista</th><th class="r">Aconteceu</th></tr></thead><tbody>${cal}</tbody></table></div>
@@ -525,14 +556,23 @@ function renderAgenda() {
   const meta = games.length === ofDay.length ? "" : `<p class="jmeta">${games.length} de ${ofDay.length} jogos com esses filtros.</p>`;
   if (!games.length) { out.innerHTML = meta + `<div class="empty">Nenhum jogo encontrado com esses filtros.</div>`; return; }
 
-  const groups = new Map();
-  for (const g of games) {
-    if (!groups.has(g.lg)) groups.set(g.lg, { name: g.ln, tier: g.tier ?? 1, list: [] });
-    groups.get(g.lg).list.push(g);
-  }
-  const ordered = [...groups.values()].sort((x, y) => x.tier - y.tier || x.name.localeCompare(y.name, "pt-BR"));
-  out.innerHTML = meta + ordered.map((grp) => `<div class="league"><h4>${esc(grp.name)}<span>${grp.list.length}</span></h4>${
-    grp.list.map(gameRow).join("")}</div>`).join("");
+  const leagues = (list) => {
+    const groups = new Map();
+    for (const g of list) {
+      if (!groups.has(g.lg)) groups.set(g.lg, { name: g.ln, tier: g.tier ?? 1, list: [] });
+      groups.get(g.lg).list.push(g);
+    }
+    return [...groups.values()].sort((x, y) => x.tier - y.tier || x.name.localeCompare(y.name, "pt-BR"))
+      .map((grp) => `<div class="league"><h4>${esc(grp.name)}<span>${grp.list.length}</span></h4>${grp.list.map(gameRow).join("")}</div>`).join("");
+  };
+  const parts = [
+    ["live", "Ao vivo", games.filter((g) => LIVE.has(g.st))],
+    ["next", "Próximos", games.filter((g) => !LIVE.has(g.st) && !DONE.has(g.st) && !OFF[g.st])],
+    ["done", "Encerrados", games.filter((g) => DONE.has(g.st)).sort((a, b) => b.t - a.t)],
+    ["off", "Adiados e cancelados", games.filter((g) => OFF[g.st])],
+  ].filter(([, , l]) => l.length);
+  out.innerHTML = meta + parts.map(([k, title, list]) => `<section class="jsec ${k}">
+    <h3 class="jsec-h"><span>${title}</span><em>${list.length}</em></h3>${leagues(list)}</section>`).join("");
 }
 
 function renderToday(ofDay, target) {
@@ -553,6 +593,16 @@ function renderToday(ofDay, target) {
     <p class="td-note">Placares atualizados na coleta das ${esc(upd)}; não é tempo real.</p>`;
 }
 
+function initials(name) {
+  const w = String(name || "?").replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/).filter(Boolean);
+  return ((w[0]?.[0] || "?") + (w.length > 1 ? w[w.length - 1][0] : w[0]?.[1] || "")).toUpperCase();
+}
+function crest(id, name) {
+  const ini = esc(initials(name));
+  const url = String(id || "").startsWith("as_tm_") ? `https://media.api-sports.io/basketball/teams/${encodeURIComponent(id.slice(6))}.png` : "";
+  return `<span class="crest" aria-hidden="true"><span>${ini}</span>${url ? `<img src="${url}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}</span>`;
+}
+
 function gameRow(g) {
   const when = new Date(g.t * 1000);
   let time = `<div class="gtime">${when.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>`;
@@ -565,9 +615,10 @@ function gameRow(g) {
   const cov = mn >= 20 ? ["c20", "20+"] : mn >= 10 ? ["c10", "10+"] : mn >= 5 ? ["c5", "5+"] : ["c0", mn ? "<5" : "–"];
   const started = g.hs != null && g.as != null && (LIVE.has(g.st) || DONE.has(g.st));
   const score = started ? `<div class="gscore"><span class="${g.hs >= g.as ? "w" : "l"}">${g.hs}</span><span class="${g.as >= g.hs ? "w" : "l"}">${g.as}</span></div>` : "<div></div>";
-  return `<button class="game" data-id="${esc(g.id)}" aria-label="${esc(g.hn)} contra ${esc(g.an)}, ver histórico">
+  const st = LIVE.has(g.st) ? "is-live" : DONE.has(g.st) ? "is-done" : OFF[g.st] ? "is-off" : "is-next";
+  return `<button class="game ${st}" data-id="${esc(g.id)}" aria-label="${esc(g.hn)} contra ${esc(g.an)}, ver histórico">
     ${time}
-    <div class="gteams"><div><b>${esc(g.hn)}</b>${hist(nh)}</div><div><b>${esc(g.an)}</b>${hist(na)}</div></div>
+    <div class="gteams"><div>${crest(g.h, g.hn)}<b>${esc(g.hn)}</b>${hist(nh)}</div><div>${crest(g.a, g.an)}<b>${esc(g.an)}</b>${hist(na)}</div></div>
     <div class="gright">${score}<span class="cov ${cov[0]}" title="Menor histórico entre os dois times">${cov[1]}</span></div></button>`;
 }
 
@@ -586,6 +637,26 @@ function openMatch(g) {
   $("selScope").value = state.scope;
   switchTab("vs");
   render();
+}
+
+// iPhone: depois de fechar o teclado, a barra fixa pode ficar fora do lugar até a página rolar.
+// Esconde a barra enquanto o teclado está aberto e realinha a tela quando ele fecha.
+function setupKeyboardFix() {
+  const isField = (el) => el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
+  const vv = window.visualViewport;
+  // teclado virtual aberto = campo em foco e área visível bem menor que a janela
+  const update = () => {
+    const open = isField(document.activeElement) && !!vv && vv.height < window.innerHeight - 120;
+    document.body.classList.toggle("kb", open);
+  };
+  vv?.addEventListener("resize", update);
+  document.addEventListener("focusin", () => setTimeout(update, 250));
+  document.addEventListener("focusout", () => {
+    setTimeout(() => {
+      update();
+      if (!isField(document.activeElement)) window.scrollTo(window.scrollX, window.scrollY);
+    }, 80);
+  });
 }
 
 // Inicia só depois de todo o módulo carregado (a abertura com dados guardados é síncrona).
