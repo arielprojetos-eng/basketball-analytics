@@ -111,18 +111,17 @@ def team_entry(game, periods, is_home):
 
 def add_to_team(store, tid, name, game, entry, keep):
     team = store.get_team(tid) or {"id": tid, "name": name, "games": []}
+    if any(e["gid"] == entry["gid"] for e in team.get("games", [])):
+        return team, False  # já registrado: não regrava (economiza cota do Firestore)
     team["name"] = name or team.get("name")
-    before = len(team.get("games", []))
-    games = [e for e in team.get("games", []) if e["gid"] != entry["gid"]]
-    team["_new"] = len(games) == before
+    games = list(team.get("games", []))
     games.append(entry)
     games.sort(key=lambda e: e["sortKey"], reverse=True)
     team["games"] = games[:keep]
     team["n"] = len(team["games"])
     team["updatedAt"] = now_iso()
-    is_new = team.pop("_new")
     store.put_team(tid, team)
-    return team, is_new
+    return team, True
 
 
 def update_index(store, game, teams_by_id):
@@ -201,7 +200,8 @@ def record_game(store, game, periods, cfg):
     keep = cfg.get("keep_games_per_team", 60)
     ht, new_h = add_to_team(store, game["homeId"], game["homeName"], game, he, keep)
     at, new_a = add_to_team(store, game["awayId"], game["awayName"], game, ae, keep)
-    update_index(store, game, {game["homeId"]: ht, game["awayId"]: at})
+    if new_h or new_a:
+        update_index(store, game, {game["homeId"]: ht, game["awayId"]: at})
     return new_h or new_a
 
 

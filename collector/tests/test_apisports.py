@@ -131,6 +131,10 @@ class BufferTests(unittest.TestCase):
         self.assertEqual(Counting.writes - before, 3)  # 2 equipes + índice
         self.assertEqual(inner.get_team("as_tm_1")["n"], 10)
         self.assertIn("as_cp_26", inner.meta["index"]["competitions"])
+        # segunda execução com os mesmos jogos: nada é regravado
+        st2 = BufferedStore(inner)
+        a.run(cl(S({"2026-11-14": games})), st2, cfg, today=date(2026, 11, 15))
+        self.assertEqual(st2.flush(), 0)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
   "daily_call_limit": 92,
   "per_run_call_limit": 30,
   "keep_games_per_team": 60,
-  "discovery_days_back": 2,
+  "discovery_days_back": 1,
   "backfill_floor_days": 400,
   "only_competitions": [],
   "priority_competitions": [
