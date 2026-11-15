@@ -52,6 +52,64 @@ def _neg(text):
     return tuple(-ord(c) for c in text)
 
 
+class BufferedStore:
+    """Acumula equipes e o índice em memória e grava uma única vez no flush().
+
+    O plano gratuito do Firestore permite 20 mil gravações por dia; gravar a cada jogo
+    esgotaria a cota no histórico retroativo. Aqui cada equipe é gravada uma vez por execução.
+    """
+
+    BUFFERED_META = {"index"}
+
+    def __init__(self, inner):
+        self.inner = inner
+        self._teams = {}
+        self._dirty = set()
+        self._meta = {}
+        self._meta_dirty = set()
+
+    def get_team(self, tid):
+        if tid not in self._teams:
+            self._teams[tid] = self.inner.get_team(tid)
+        t = self._teams[tid]
+        return json.loads(json.dumps(t)) if t else None
+
+    def put_team(self, tid, data):
+        self._teams[tid] = json.loads(json.dumps(data))
+        self._dirty.add(tid)
+
+    def get_meta(self, name):
+        if name in self.BUFFERED_META:
+            if name not in self._meta:
+                self._meta[name] = self.inner.get_meta(name)
+            return json.loads(json.dumps(self._meta[name]))
+        return self.inner.get_meta(name)
+
+    def set_meta(self, name, data):
+        if name in self.BUFFERED_META:
+            self._meta[name] = json.loads(json.dumps(data))
+            self._meta_dirty.add(name)
+        else:
+            self.inner.set_meta(name, data)
+
+    def flush(self):
+        teams = {tid: self._teams[tid] for tid in self._dirty}
+        if hasattr(self.inner, "put_teams_batch"):
+            self.inner.put_teams_batch(teams)
+        else:
+            for tid, data in teams.items():
+                self.inner.put_team(tid, data)
+        for name in self._meta_dirty:
+            self.inner.set_meta(name, self._meta[name])
+        n = len(self._dirty) + len(self._meta_dirty)
+        self._dirty.clear()
+        self._meta_dirty.clear()
+        return n
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
 class FirestoreStore:
     def __init__(self):
         import firebase_admin
@@ -113,3 +171,11 @@ class FirestoreStore:
 
     def put_team(self, tid, data):
         self.db.collection("teams").document(tid).set(data)
+
+    def put_teams_batch(self, teams):
+        items = list(teams.items())
+        for i in range(0, len(items), 400):
+            batch = self.db.batch()
+            for tid, data in items[i:i + 400]:
+                batch.set(self.db.collection("teams").document(tid), data)
+            batch.commit()

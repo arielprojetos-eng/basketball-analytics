@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .api import (ApiError, BudgetExhausted, Client, QuotaExceeded,
                   UpgradeRequired)
-from .store import FirestoreStore, now_iso
+from .store import BufferedStore, FirestoreStore, now_iso
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
@@ -112,14 +112,17 @@ def team_entry(game, periods, is_home):
 def add_to_team(store, tid, name, game, entry, keep):
     team = store.get_team(tid) or {"id": tid, "name": name, "games": []}
     team["name"] = name or team.get("name")
+    before = len(team.get("games", []))
     games = [e for e in team.get("games", []) if e["gid"] != entry["gid"]]
+    team["_new"] = len(games) == before
     games.append(entry)
     games.sort(key=lambda e: e["sortKey"], reverse=True)
     team["games"] = games[:keep]
     team["n"] = len(team["games"])
     team["updatedAt"] = now_iso()
+    is_new = team.pop("_new")
     store.put_team(tid, team)
-    return team
+    return team, is_new
 
 
 def update_index(store, game, teams_by_id):
@@ -196,9 +199,10 @@ def record_game(store, game, periods, cfg):
     he = team_entry(game, periods, True)
     ae = team_entry(game, periods, False)
     keep = cfg.get("keep_games_per_team", 60)
-    ht = add_to_team(store, game["homeId"], game["homeName"], game, he, keep)
-    at = add_to_team(store, game["awayId"], game["awayName"], game, ae, keep)
+    ht, new_h = add_to_team(store, game["homeId"], game["homeName"], game, he, keep)
+    at, new_a = add_to_team(store, game["awayId"], game["awayName"], game, ae, keep)
     update_index(store, game, {game["homeId"]: ht, game["awayId"]: at})
+    return new_h or new_a
 
 
 def backfill_step(client, store, cfg):
@@ -284,7 +288,7 @@ def main(argv=None):
     if not key_bba and not key_as:
         print("Defina BASKETBALL_API_KEY e/ou APISPORTS_KEY.", file=sys.stderr)
         return 2
-    store = FirestoreStore()
+    store = BufferedStore(FirestoreStore())
     failures = 0
 
     if key_as and args.only in (None, "apisports"):
@@ -299,6 +303,8 @@ def main(argv=None):
             except Exception as e:  # uma fonte com problema não derruba a outra
                 failures += 1
                 print("api-sports falhou:", e, file=sys.stderr)
+            finally:
+                print("api-sports: documentos gravados:", store.flush())
         else:
             print(f"api-sports: cota diária quase esgotada (usadas {used}).")
 
@@ -312,6 +318,8 @@ def main(argv=None):
             except Exception as e:
                 failures += 1
                 print("basketballapi falhou:", e, file=sys.stderr)
+            finally:
+                print("basketballapi: documentos gravados:", store.flush())
         else:
             print(f"basketballapi: cota diária quase esgotada (usadas {used}).")
     return 1 if failures else 0

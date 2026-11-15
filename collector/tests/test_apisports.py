@@ -105,5 +105,33 @@ class ApiSportsTests(unittest.TestCase):
         self.assertEqual(len(s.calls), 3)
 
 
+class BufferTests(unittest.TestCase):
+    def test_grava_cada_equipe_uma_vez(self):
+        from collector.store import BufferedStore
+
+        class Counting(MemoryStore):
+            writes = 0
+
+            def put_team(self, tid, data):
+                Counting.writes += 1
+                super().put_team(tid, data)
+
+            def set_meta(self, name, data):
+                Counting.writes += 1
+                super().set_meta(name, data)
+
+        inner = Counting()
+        games = [g(i, d="2026-11-14") for i in range(1, 11)]  # 10 jogos, mesmas 2 equipes
+        s = S({"2026-11-14": games})
+        st = BufferedStore(inner)
+        cfg = {**CFG, "apisports": {**CFG["apisports"], "backfill_floor_days": 1}}
+        a.run(cl(s), st, cfg, today=date(2026, 11, 15))
+        before = Counting.writes
+        st.flush()
+        self.assertEqual(Counting.writes - before, 3)  # 2 equipes + índice
+        self.assertEqual(inner.get_team("as_tm_1")["n"], 10)
+        self.assertIn("as_cp_26", inner.meta["index"]["competitions"])
+
+
 if __name__ == "__main__":
     unittest.main()

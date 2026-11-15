@@ -123,17 +123,16 @@ def normalize(g, cfg):
 
 
 def ingest_date(client, store, cfg, d):
+    """Uma chamada por data. Não usa a coleção games: a deduplicação é feita
+    pelo histórico de cada equipe, o que economiza gravações no Firestore."""
     rows = client.get("/games", {"date": d.isoformat(), "timezone": "UTC"})
-    parsed = [normalize(g, cfg) for g in rows]
-    parsed = [p for p in parsed if p and competition_allowed(p[0]["competitionName"], cfg)]
-    known = store.existing_game_ids([p[0]["id"] for p in parsed])
     new = 0
-    for game, periods in parsed:
-        if game["id"] in known:
+    for g in rows:
+        p = normalize(g, cfg)
+        if not p or not competition_allowed(p[0]["competitionName"], cfg):
             continue
-        record_game(store, game, periods, cfg)
-        store.put_game(game)
-        new += 1
+        if record_game(store, p[0], p[1], cfg):
+            new += 1
     return new
 
 
