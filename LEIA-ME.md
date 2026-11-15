@@ -24,9 +24,18 @@ Informe os placares dos quartos encerrados. Para cada quarto restante, a base é
 
 ## Testes
 
-    python -m unittest collector.tests.test_collector collector.tests.test_apisports
+    python -m unittest collector.tests.test_collector collector.tests.test_apisports collector.tests.test_model
     node --test tests/stats.test.mjs
 
 ## Pré-visualização sem Firebase
 
 Abra o painel com `?demo` no final do endereço: usa dados fictícios, marcados na tela.
+
+## Modelo, validação e backtest
+
+- **Projeção cruzada**: (ataque de A + defesa de B)/2 + (ataque de B + defesa de A)/2, por período, nos últimos N jogos da mesma liga. Opcionalmente com peso maior aos jogos recentes (meia-vida de 8 jogos).
+- **Chance estimada**: curva normal centrada na projeção. A dispersão é a das duas equipes, puxada para o padrão da liga (`meta/priors`) quando há poucos jogos. É diferente da frequência histórica, que continua visível ao lado.
+- **Validação**: um jogo só entra no histórico se a soma dos quartos (mais prorrogações) bater com o placar final e cada período estiver entre 0 e 80 pontos.
+- **Backtest** (`collector/backtest.py`): roda uma vez por dia, na primeira coleta do dia. Para cada jogo armazenado, refaz a projeção usando só os jogos anteriores das duas equipes (mínimo de 3 de cada) e mede erro médio (simples e com recência), viés, Brier (modelo e frequência) e calibração. O resultado fica na aba Dados.
+- **Pace**: não implementado, porque exige posses de bola (box score), indisponíveis nos planos gratuitos.
+- **Prorrogação**: os quartos e o tempo regulamentar nunca incluem prorrogação; só o período "Jogo com prorrogação" inclui.

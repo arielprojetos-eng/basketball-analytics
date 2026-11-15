@@ -114,7 +114,8 @@ test("projeção ao vivo: jogo mais rápido eleva só parcialmente", () => {
 
 test("projeção ao vivo: sem amostra ou dispersão devolve null", () => {
   assert.equal(liveProjection([], [], [{ a: 20, b: 20 }]), null);
-  assert.equal(liveProjection(mk(1, 22, 1), mk(1, 22, 1), [{ a: 20, b: 20 }]), null); // 1 jogo, sem desvio
+  // com 1 jogo não há desvio próprio: usa o padrão da liga em vez de recusar
+  assert.equal(liveProjection(mk(1, 22, 1), mk(1, 22, 1), [{ a: 20, b: 20 }]).rest[0].sd, 7.5);
   assert.equal(liveProjection(mk(20, 22, 1), mk(20, 22, 1), []), null);
   assert.equal(liveProjection(mk(20, 22, 1), mk(20, 22, 1), [{ a: 1, b: 1 }, { a: 1, b: 1 }, { a: 1, b: 1 }, { a: 1, b: 1 }]), null);
 });
@@ -123,4 +124,29 @@ test("probOver", () => {
   assert.ok(Math.abs(probOver(100, 10, 100) - 50) < 0.01);
   assert.ok(probOver(100, 10, 80.5) > 95);
   assert.equal(probOver(100, 0, 90), null);
+});
+
+import { wmean, shrunkSd, centralLine, priorFor, HALF_LIFE } from "../public/js/stats.js";
+
+test("recência igual ao Python", () => {
+  assert.equal(wmean([10, 0], false), 5);
+  const w1 = 0.5 ** (1 / HALF_LIFE);
+  assert.ok(Math.abs(wmean([10, 0], true) - 10 / (1 + w1)) < 1e-12);
+});
+
+test("dispersão ajustada e priors", () => {
+  const few = { n: 2, totalStd: 1 }, many = { n: 60, totalStd: 1 };
+  assert.ok(shrunkSd(few, few, 7.5) > shrunkSd(many, many, 7.5));
+  assert.equal(shrunkSd({ n: 1, totalStd: null }, { n: 1, totalStd: null }, 7.5), 7.5);
+  assert.equal(centralLine(46.2), 46.5);
+  assert.equal(priorFor({ comps: { c1: { q3: 9 } }, global: { q3: 8 } }, "c1", "q3"), 9);
+  assert.equal(priorFor({ global: { q3: 8 } }, "c2", "q3"), 8);
+  assert.equal(priorFor(null, "c2", "q3"), 7.5);
+});
+
+test("pré-jogo na projeção ao vivo", () => {
+  const rows = mk(20, 22, 1);
+  const r = liveProjection(rows, rows, [{ a: 22, b: 22 }]);
+  assert.ok(r.pregameTotal > 0);
+  assert.ok(Math.abs(r.pregameTotal - (r.expected + r.rest.reduce((s, q) => s + q.total, 0) / r.mult)) < 1e-9);
 });

@@ -1,5 +1,5 @@
 import { DEMO, CONFIGURED, getMeta, getTeam } from "./data.js";
-import { PERIODS, sample, summarize, overPct, lineGrid, projections, liveProjection, probOver } from "./stats.js";
+import { PERIODS, sample, summarize, overPct, lineGrid, projections, liveProjection, probOver, shrunkSd, priorFor, centralLine } from "./stats.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -7,10 +7,12 @@ const f1 = (x) => (x == null ? "–" : x.toLocaleString("pt-BR", { minimumFracti
 const pc = (x) => (x == null ? "–" : Math.round(x) + "%");
 const NS = [5, 10, 20];
 
-const state = { comp: null, a: null, b: null, period: "q3", n: 20, venue: "all", scope: "comp" };
+const state = { comp: null, a: null, b: null, period: "q3", n: 20, venue: "all", scope: "comp", recency: false };
 let index = null;
 let agenda = null;
-const jstate = { day: 0, q: "", onlyData: false };
+let priors = null;
+let backtestRes = null;
+const jstate = { day: 0, q: "", minN: 0 };
 
 try { Object.assign(state, JSON.parse(localStorage.getItem("ba-state") || "{}")); } catch {}
 const save = () => { try { localStorage.setItem("ba-state", JSON.stringify(state)); } catch {} };
@@ -33,10 +35,11 @@ async function init() {
       getMeta("status_apisports"), getMeta("backfill_apisports"), getMeta("agenda")]);
     index = idx;
     agenda = ag;
+    [priors, backtestRes] = await Promise.all([getMeta("priors"), getMeta("backtest")]);
     setupAgenda();
     const runs = [s1, s2].filter((x) => x && x.lastRun).sort((x, y) => (x.lastRun < y.lastRun ? 1 : -1));
     renderStatusChip(runs[0]);
-    renderCoverage(idx, [
+    renderCoverage(idx, backtestRes, [
       { name: "API-Sports", status: s2, backfill: b2 },
       { name: "Basketball API", status: s1, backfill: b1 },
     ]);
@@ -108,6 +111,8 @@ function buildControls() {
   $("chipsN").innerHTML = NS.map((n) => `<button class="chipbtn" data-v="${n}">${n}</button>`).join("");
   $("selVenue").value = state.venue;
   $("selScope").value = state.scope;
+  $("selRecency").value = state.recency ? "1" : "0";
+  $("selRecency").addEventListener("change", (e) => { state.recency = e.target.value === "1"; render(); });
   syncChips();
 
   $("selComp").addEventListener("change", (e) => { state.comp = e.target.value; refillTeams(true); render(); });
@@ -160,15 +165,19 @@ async function render() {
   const vB = state.venue === "ah" ? "away" : state.venue === "ha" ? "home" : "all";
   const rowsA = sample(ta.games, { n: state.n, venue: vA, cid });
   const rowsB = sample(tb.games, { n: state.n, venue: vB, cid });
-  const A = summarize(rowsA, state.period);
-  const B = summarize(rowsB, state.period);
+  const A = summarize(rowsA, state.period, state.recency);
+  const B = summarize(rowsB, state.period, state.recency);
   const P = projections(A, B);
   const label = PERIODS.find((p) => p.key === state.period).label;
+  const sd = shrunkSd(A, B, priorFor(priors, state.comp, state.period));
+  const warn = Math.min(A.n, B.n) < 5
+    ? `<div class="alert">Amostra pequena (${Math.min(A.n, B.n)} jogo${Math.min(A.n, B.n) === 1 ? "" : "s"} na equipe com menos dados). Os números indicam tendência, não confiabilidade.</div>` : "";
 
   $("result").innerHTML = `<div class="board">
+    ${warn}
+    ${projectionCard(A, B, P, label, sd)}
+    ${linesCard(A, B, P, sd)}
     ${scoreboard(ta, tb, A, B, label)}
-    ${projectionCard(A, B, P, label)}
-    ${linesCard(A, B, P)}
     <div class="charts">
       ${chartCard(ta.name, rowsA, A, "a", label)}
       ${chartCard(tb.name, rowsB, B, "b", label)}
@@ -197,36 +206,39 @@ function scoreboard(ta, tb, A, B, label) {
   return `<div class="score">${side(ta, A, "a")}${side(tb, B, "b")}</div>`;
 }
 
-function projectionCard(A, B, P, label) {
+function projectionCard(A, B, P, label, sd) {
   if (P.cruzada == null) return `<div class="card"><h4>Projeção do ${esc(label.toLowerCase())}</h4><div class="empty">Sem amostra suficiente para projetar.</div></div>`;
-  return `<div class="card"><h4>Projeção de pontos combinados</h4>
-    <div class="proj">
-      <div><div class="k">${f1(P.cruzada)}</div><small>Cruzada: ataque de um time com a defesa do outro</small></div>
-      <div><div class="k">${f1(P.somaOfensiva)}</div><small>Soma das médias marcadas</small></div>
+  const z = 1.2816; // faixa de 80%
+  const lo = P.cruzada - z * sd, hi = P.cruzada + z * sd;
+  return `<div class="card hero"><h4>Projeção do ${esc(label.toLowerCase())} · os dois times</h4>
+    <div class="hero-k">${f1(P.cruzada)}</div>
+    <div class="hero-range">Faixa provável (80%): <b>${f1(lo)}</b> a <b>${f1(hi)}</b></div>
+    <div class="hero-sub">
+      <div><b>${f1(P.pontosA)}</b><small>esperado para A</small></div>
+      <div><b>${f1(P.pontosB)}</b><small>esperado para B</small></div>
+      <div><b>${f1(P.somaOfensiva)}</b><small>soma das médias marcadas</small></div>
     </div>
-    <p class="hint">Pontos esperados por equipe na projeção cruzada: ${f1(P.pontosA)} e ${f1(P.pontosB)}. Estimativa estatística a partir do histórico, não garante resultado.</p></div>`;
+    <p class="hint">Projeção cruzada: ataque de cada time combinado com a defesa do adversário${state.recency ? ", com mais peso aos jogos recentes" : ""}. Estimativa estatística, não garante resultado.</p></div>`;
 }
 
 function pctCell(v, k) {
   return v == null ? `<div class="pct na"><span>–</span></div>` : `<div class="pct ${k}"><i style="width:${v}%"></i><span>${pc(v)}</span></div>`;
 }
 
-function linesCard(A, B, P) {
-  const centers = [A.totalAvg, B.totalAvg].filter((x) => x != null);
-  if (!centers.length) return "";
-  const center = centers.reduce((s, x) => s + x, 0) / centers.length;
-  const grid = lineGrid(center, 3);
-  const rows = grid.map((line) => {
+function linesCard(A, B, P, sd) {
+  if (P.cruzada == null) return "";
+  const center = centralLine(P.cruzada);
+  const rows = lineGrid(P.cruzada, 3).map((line) => {
+    const pm = probOver(P.cruzada, sd, line);
     const pa = overPct(A.totalSeries, line), pb = overPct(B.totalSeries, line);
-    const both = pa != null && pb != null ? (pa + pb) / 2 : null;
-    const mid = Math.abs(line - center) < 0.5 ? "mid" : "";
+    const mid = line === center ? "mid" : "";
     return `<tr class="${mid}"><td>${line.toLocaleString("pt-BR", { minimumFractionDigits: 1 })}</td>
-      <td>${pctCell(pa, "a")}</td><td>${pctCell(pb, "b")}</td><td class="r">${pc(both)}</td></tr>`;
+      <td>${pctCell(pm, "m")}</td><td class="r freq">${pc(pa)}</td><td class="r freq">${pc(pb)}</td></tr>`;
   }).join("");
-  return `<div class="card"><h4>Over do total no período (os dois times somados)</h4>
-    <table class="lines"><thead><tr><th>Linha</th><th>Jogos de A</th><th>Jogos de B</th><th class="r">Média</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <p class="hint">Percentual dos jogos de cada equipe em que a soma dos pontos dos dois times superou a linha. Desvio padrão do total: A ${f1(A.totalStd)} e B ${f1(B.totalStd)}.</p></div>`;
+  return `<div class="card"><h4>Over do total no período</h4>
+    <div class="tw"><table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th><th class="r">Jogos de A</th><th class="r">Jogos de B</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="hint"><b>Chance estimada</b>: curva normal centrada na projeção (linha destacada), com dispersão de ${f1(sd)} pontos, ajustada para o padrão da liga quando há poucos jogos. <b>Jogos de A/B</b>: frequência histórica, ou seja, em quantos jogos de cada equipe a soma passou da linha. Frequência não é probabilidade, e a aba Dados mostra qual das duas acerta mais.</p></div>`;
 }
 
 function chartCard(name, rows, S, k, label) {
@@ -270,7 +282,7 @@ function gamesCard(name, rows, k) {
 }
 
 // ---------- cobertura ----------
-function renderCoverage(idx, sources) {
+function renderCoverage(idx, bt, sources) {
   const comps = Object.entries(idx?.competitions || {});
   const teamsAll = comps.flatMap(([, c]) => Object.values(c.teams || {}));
   const ready = teamsAll.filter((t) => t.n >= 20).length;
@@ -295,6 +307,7 @@ function renderCoverage(idx, sources) {
       <div class="stat"><b>${pending ?? "–"}</b><small>jogos na fila (Basketball API)</small></div>
     </div>
     <div class="card" style="margin-bottom:14px"><h4>Fontes de dados</h4>${srcRows}</div>
+    ${precisionCard(bt)}
     <div class="card"><h4>Por competição</h4><div class="tw"><table>
       <thead><tr><th>Competição</th><th class="r">Equipes</th><th class="r">Jogos</th><th class="r">Com 20+</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="4">Sem dados ainda.</td></tr>`}</tbody></table></div></div>`;
@@ -335,7 +348,7 @@ function renderLiveResult() {
     played.push({ a, b });
   }
   if (!played.length) { out.innerHTML = `<div class="empty" style="margin-top:14px">Informe o placar do 1º quarto (os dois times) para ver a projeção.</div>`; return; }
-  const R = liveProjection(rowsA, rowsB, played);
+  const R = liveProjection(rowsA, rowsB, played, { recency: state.recency, priors, cid: state.comp });
   if (!R) {
     out.innerHTML = `<div class="empty" style="margin-top:14px">Amostra insuficiente para projetar: cada equipe precisa de pelo menos 2 jogos com placar por quarto nos filtros escolhidos.</div>`;
     return;
@@ -360,6 +373,7 @@ function renderLiveResult() {
     <div class="card"><h4>Total final projetado</h4>
       <div class="proj"><div><div class="k">${f1(R.finalTotal)}</div><small>pontos somados, tempo regulamentar</small></div>
       <div><div class="k">${sign(dev)}</div><small>ritmo do jogo vs. esperado ${played.length === 1 ? "no quarto jogado" : `nos ${played.length} quartos jogados`}</small></div></div>
+      <div class="delta">Projeção pré-jogo: <b>${f1(R.pregameTotal)}</b> → agora: <b>${f1(R.finalTotal)}</b> (${R.finalTotal - R.pregameTotal >= 0 ? "+" : ""}${f1(R.finalTotal - R.pregameTotal)})</div>
       <p class="hint">O ritmo observado entra com peso de ${Math.round(R.weight * 100)}% (o restante vem do histórico das equipes), porque o que acontece num quarto prevê pouco o seguinte. Faixas "±" são o desvio padrão do total de cada quarto.</p></div>
     <div class="card"><h4>Quartos restantes</h4><div class="tw"><table>
       <thead><tr><th>Quarto</th><th class="r">${esc(ta.name)}</th><th class="r">${esc(tb.name)}</th><th class="r">Total</th></tr></thead>
@@ -372,6 +386,38 @@ function renderLiveResult() {
   </div>`;
 }
 
+
+// ---------- precisão do modelo (backtest) ----------
+const PLABEL = { q1: "1º quarto", q2: "2º quarto", q3: "3º quarto", q4: "4º quarto", h1: "1º tempo", h2: "2º tempo", reg: "Jogo (regulamentar)" };
+
+function precisionCard(bt) {
+  const head = `<div class="card" style="margin-bottom:14px"><h4>Precisão do modelo (backtest)</h4>`;
+  if (!bt || !bt.games) {
+    return head + `<p class="hint" style="margin:0">Ainda sem jogos suficientes para avaliar. O teste roda uma vez por dia e só avalia jogos em que as duas equipes já tinham pelo menos ${bt?.params?.minPrior ?? 3} jogos anteriores na mesma liga. Com o histórico crescendo dia a dia, os primeiros números aparecem em alguns dias.</p></div>`;
+  }
+  const rows = Object.entries(PLABEL).map(([k, l]) => {
+    const d = bt.periods?.[k];
+    if (!d || !d.n) return `<div class="prow"><div class="pl">${l}</div><div class="ps"><span>sem jogos avaliados</span></div></div>`;
+    const recBetter = d.maeRecency < d.maeSimple;
+    const bm = d.brierModel <= d.brierFreq;
+    const st = (v, lab, best) => `<span class="${best ? "best" : ""}"><b>${v}</b>${lab}</span>`;
+    return `<div class="prow"><div class="pl">${l}<em>${d.n} jogos</em></div><div class="ps">
+      ${st(f1(d.maeSimple), "erro simples", !recBetter)}${st(f1(d.maeRecency), "erro recência", recBetter)}
+      ${st((d.bias > 0 ? "+" : "") + f1(d.bias), "viés", false)}
+      ${st(d.brierModel.toFixed(3).replace(".", ","), "Brier modelo", bm)}${st(d.brierFreq.toFixed(3).replace(".", ","), "Brier frequência", !bm)}
+    </div></div>`;
+  }).join("");
+  const cal = (bt.calibration || []).filter((c) => c.n).map((c) =>
+    `<tr><td>${Math.round(c.lo * 100)}–${Math.round(c.hi * 100)}%</td><td class="r">${c.n}</td><td class="r">${pc(c.p * 100)}</td><td class="r">${pc(c.freq * 100)}</td></tr>`).join("");
+  const comps = (bt.byComp || []).map((c) => `<tr><td>${esc(c.name)}</td><td class="r">${c.n}</td><td class="r">${f1(c.mae)}</td></tr>`).join("");
+  return head + `<p class="hint" style="margin:0 0 10px">${bt.games} jogos avaliados. Cada projeção usou só os jogos anteriores ao jogo avaliado (últimos ${bt.params.lastN}, mesma liga). Atualizado em ${esc(new Date(bt.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }))}.</p>
+    <div class="plist">${rows}</div>
+    <p class="hint"><b>Erro médio</b>: diferença média, em pontos, entre a projeção e o total real (menor é melhor; o melhor método de cada linha fica em verde). <b>Viés</b> positivo indica que o modelo projeta acima do real. <b>Brier</b> mede a qualidade das chances de Over (0 é perfeito; 0,25 equivale a chutar 50%) e compara a chance estimada do modelo com a frequência histórica.</p>
+    ${cal ? `<h4 style="margin-top:14px">Calibração das chances</h4><div class="tw"><table><thead><tr><th>Faixa prevista</th><th class="r">Casos</th><th class="r">Média prevista</th><th class="r">Aconteceu</th></tr></thead><tbody>${cal}</tbody></table></div>
+    <p class="hint">Bem calibrado é quando "Média prevista" e "Aconteceu" ficam próximas.</p>` : ""}
+    ${comps ? `<h4 style="margin-top:14px">Erro por liga (quartos)</h4><div class="tw"><table><thead><tr><th>Liga</th><th class="r">Jogos</th><th class="r">Erro médio</th></tr></thead><tbody>${comps}</tbody></table></div>` : ""}
+  </div>`;
+}
 
 // ---------- jogos do dia ----------
 const LIVE = new Set(["Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"]);
@@ -390,7 +436,7 @@ function setupAgenda() {
   sync();
   $("chipsDay").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { jstate.day = +b.dataset.v; sync(); renderAgenda(); } });
   $("jSearch").addEventListener("input", (e) => { jstate.q = e.target.value.trim().toLowerCase(); renderAgenda(); });
-  $("jOnlyData").addEventListener("change", (e) => { jstate.onlyData = e.target.checked; renderAgenda(); });
+  $("jMinN").addEventListener("change", (e) => { jstate.minN = +e.target.value; renderAgenda(); });
   $("jList").addEventListener("click", (e) => {
     const b = e.target.closest(".game");
     if (!b) return;
@@ -412,7 +458,7 @@ function renderAgenda() {
   const games = agenda.games.filter((g) => {
     if (localDay(new Date(g.t * 1000)) !== day) return false;
     if (q && !`${g.hn} ${g.an} ${g.ln}`.toLowerCase().includes(q)) return false;
-    if (jstate.onlyData && !(teamN(g.lg, g.h) && teamN(g.lg, g.a))) return false;
+    if (jstate.minN && Math.min(teamN(g.lg, g.h), teamN(g.lg, g.a)) < jstate.minN) return false;
     return true;
   });
   const upd = agenda.updatedAt ? new Date(agenda.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "–";
@@ -437,12 +483,14 @@ function gameRow(g) {
   else if (OFF[g.st]) time = `<div class="gtime off">${OFF[g.st]}</div>`;
   const nh = teamN(g.lg, g.h), na = teamN(g.lg, g.a);
   const hist = (n) => `<span class="hn ${n ? "ok" : ""}">${n ? n + " jogo" + (n > 1 ? "s" : "") : "sem histórico"}</span>`;
+  const mn = Math.min(nh, na);
+  const cov = mn >= 20 ? ["c20", "20+"] : mn >= 10 ? ["c10", "10+"] : mn >= 5 ? ["c5", "5+"] : ["c0", mn ? "<5" : "–"];
   const started = g.hs != null && g.as != null && (LIVE.has(g.st) || DONE.has(g.st));
   const score = started ? `<div class="gscore"><span class="${g.hs >= g.as ? "w" : "l"}">${g.hs}</span><span class="${g.as >= g.hs ? "w" : "l"}">${g.as}</span></div>` : "<div></div>";
   return `<button class="game" data-id="${esc(g.id)}" aria-label="${esc(g.hn)} contra ${esc(g.an)}, ver histórico">
     ${time}
     <div class="gteams"><div><b>${esc(g.hn)}</b>${hist(nh)}</div><div><b>${esc(g.an)}</b>${hist(na)}</div></div>
-    ${score}</button>`;
+    <div class="gright">${score}<span class="cov ${cov[0]}" title="Menor histórico entre os dois times">${cov[1]}</span></div></button>`;
 }
 
 function openMatch(g) {
@@ -458,6 +506,8 @@ function openMatch(g) {
     state.a = g.h; state.b = g.a;
   }
   $("selScope").value = state.scope;
+  $("selRecency").value = state.recency ? "1" : "0";
+  $("selRecency").addEventListener("change", (e) => { state.recency = e.target.value === "1"; render(); });
   switchTab("vs");
   window.scrollTo({ top: 0, behavior: "smooth" });
   render();

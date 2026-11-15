@@ -62,6 +62,19 @@ function demoAgenda() {
 
 export const demoMeta = (name) => {
   if (name === "agenda") return demoAgenda();
+  if (name === "priors") return null;
+  if (name === "backtest") return { games: 120, date: "2026-11-15", updatedAt: "2026-11-15T08:20:00+00:00",
+    params: { lastN: 10, minPrior: 3, halfLife: 8 },
+    periods: { q1: { n: 120, maeSimple: 5.9, maeRecency: 6.1, bias: 0.4, brierModel: 0.232, brierFreq: 0.268 },
+      q2: { n: 120, maeSimple: 6.0, maeRecency: 5.8, bias: -0.2, brierModel: 0.236, brierFreq: 0.271 },
+      q3: { n: 120, maeSimple: 5.7, maeRecency: 5.9, bias: 0.6, brierModel: 0.229, brierFreq: 0.262 },
+      q4: { n: 120, maeSimple: 6.4, maeRecency: 6.3, bias: -0.9, brierModel: 0.241, brierFreq: 0.275 },
+      h1: { n: 120, maeSimple: 8.6, maeRecency: 8.7, bias: 0.2, brierModel: 0.238, brierFreq: 0.27 },
+      h2: { n: 120, maeSimple: 8.9, maeRecency: 8.8, bias: -0.3, brierModel: 0.24, brierFreq: 0.273 },
+      reg: { n: 120, maeSimple: 12.4, maeRecency: 12.6, bias: 0.1, brierModel: 0.239, brierFreq: 0.28 } },
+    calibration: [{ lo: 0, hi: 0.2, n: 400, p: 0.12, freq: 0.15 }, { lo: 0.2, hi: 0.4, n: 600, p: 0.3, freq: 0.33 },
+      { lo: 0.4, hi: 0.6, n: 800, p: 0.5, freq: 0.49 }, { lo: 0.6, hi: 0.8, n: 600, p: 0.7, freq: 0.66 }, { lo: 0.8, hi: 1, n: 400, p: 0.88, freq: 0.84 }],
+    byComp: [{ name: "Liga Demo A", n: 70, mae: 5.8 }, { name: "Copa Demo B", n: 50, mae: 6.2 }] };
   if (name === "index") return index;
   if (name === "status") {
     return { lastRun: "2026-11-15T08:17:00+00:00", callsThisRun: 31, usedToday: 62, pending: 38,

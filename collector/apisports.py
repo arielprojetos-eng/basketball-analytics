@@ -11,7 +11,7 @@ from datetime import date, timedelta
 import requests
 
 from .api import BudgetExhausted
-from .main import competition_allowed, competition_tier, record_game, today_utc
+from .main import competition_allowed, competition_tier, record_game, scores_match, today_utc
 from .store import now_iso
 
 BASE = "https://v1.basketball.api-sports.io"
@@ -87,6 +87,8 @@ def normalize(g, cfg):
             home.append(int(oth)); away.append(int(ota))
         except (TypeError, ValueError):
             pass
+    if not scores_match((home, away), sh.get("total"), sa.get("total")):
+        return None
     league = g.get("league") or {}
     teams = g.get("teams") or {}
     th, ta = teams.get("home") or {}, teams.get("away") or {}

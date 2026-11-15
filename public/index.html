@@ -31,7 +31,14 @@
   <div class="panel jbar">
     <div class="chips" id="chipsDay"></div>
     <input id="jSearch" type="search" placeholder="Buscar time ou liga" autocomplete="off">
-    <label class="jcheck"><input type="checkbox" id="jOnlyData"> Só jogos com histórico</label>
+    <label class="field"><span>Histórico mínimo dos dois times</span>
+      <select id="jMinN">
+        <option value="0">Todos os jogos</option>
+        <option value="1">Com algum histórico</option>
+        <option value="5">5 jogos ou mais</option>
+        <option value="10">10 jogos ou mais</option>
+        <option value="20">20 jogos ou mais</option>
+      </select></label>
   </div>
   <div id="jList"></div>
 </section>
@@ -55,11 +62,18 @@
           <option value="ha">A fora, B em casa</option>
         </select></label>
     </div>
+    <div class="row2">
     <label class="field"><span>Amostra</span>
       <select id="selScope">
-        <option value="comp">Somente a competição escolhida</option>
-        <option value="all">Todas as competições da equipe</option>
+        <option value="comp">Só a competição</option>
+        <option value="all">Todas as competições</option>
       </select></label>
+    <label class="field"><span>Peso dos jogos</span>
+      <select id="selRecency">
+        <option value="0">Peso igual</option>
+        <option value="1">Mais peso aos recentes</option>
+      </select></label>
+    </div>
   </div>
 
 <section id="tab-vs" hidden>

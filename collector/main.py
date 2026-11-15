@@ -90,6 +90,18 @@ def valid_periods(periods):
         return None
 
 
+def scores_match(periods, home_total, away_total):
+    """Os quartos (mais prorrogações) precisam somar o placar final, e cada período ter valor plausível."""
+    home, away = periods
+    if any(not 0 <= x <= 80 for x in home + away):
+        return False
+    if home_total is not None and sum(home) != int(home_total):
+        return False
+    if away_total is not None and sum(away) != int(away_total):
+        return False
+    return True
+
+
 def team_entry(game, periods, is_home):
     home, away = periods
     own, opp = (home, away) if is_home else (away, home)
@@ -178,6 +190,8 @@ def fetch_details(client, store, cfg, max_games):
                 continue
             raise
         periods = valid_periods((data or {}).get("periods"))
+        if periods and not scores_match(periods, game.get("homeScore"), game.get("awayScore")):
+            periods = None
         if not periods:
             store.update_game(game["id"], {"periodsFetched": True, "hasQuarters": False})
             done += 1
@@ -279,7 +293,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--max-calls", type=int, default=None)
-    r.add_argument("--only", choices=["basketballapi", "apisports"], default=None)
+    r.add_argument("--only", choices=["basketballapi", "apisports", "backtest"], default=None)
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -290,6 +304,10 @@ def main(argv=None):
         return 2
     store = BufferedStore(FirestoreStore())
     failures = 0
+    if args.only == "backtest":
+        from . import backtest
+        print("backtest:", backtest.run(store, "forcar"))
+        return 0
 
     if key_as and args.only in (None, "apisports"):
         from . import apisports
@@ -322,6 +340,15 @@ def main(argv=None):
                 print("basketballapi: documentos gravados:", store.flush())
         else:
             print(f"basketballapi: cota diária quase esgotada (usadas {used}).")
+    if args.only is None:
+        try:
+            from . import backtest
+            out = backtest.run(store, today_utc().isoformat())
+            if out:
+                print("backtest:", out)
+        except Exception as e:
+            failures += 1
+            print("backtest falhou:", e, file=sys.stderr)
     return 1 if failures else 0
 
 

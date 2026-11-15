@@ -13,7 +13,7 @@ def game(gid, comp="Liga X", d="2026-11-14", home=("tm_a", "Alfa"), away=("tm_b"
     return {"id": gid, "competition": {"id": "cp_" + comp, "name": comp}, "season": {"name": "2026"},
             "date": d, "tip_off": d + "T20:00:00Z", "status": "final",
             "home": {"id": home[0], "name": home[1]}, "away": {"id": away[0], "name": away[1]},
-            "home_score": 90, "away_score": 80}
+            "home_score": None, "away_score": None}
 
 
 class FakeResp:
@@ -159,3 +159,14 @@ class ApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ValidacaoTests(unittest.TestCase):
+    def test_placar_inconsistente_nao_entra(self):
+        gm = game("gm_x")
+        gm["home_score"], gm["away_score"] = 999, 80
+        s = FakeSession({"recent": [gm]}, {"gm_x": {"home": [20, 20, 20, 20], "away": [20, 20, 20, 20]}})
+        store = MemoryStore()
+        m.run(client(s), store, CFG, today=date(2026, 11, 15))
+        self.assertFalse(store.games["gm_x"]["hasQuarters"])
+        self.assertIsNone(store.get_team("tm_a"))

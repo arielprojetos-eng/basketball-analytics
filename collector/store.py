@@ -46,6 +46,9 @@ class MemoryStore:
     def put_team(self, tid, data):
         self.teams[tid] = json.loads(json.dumps(data))
 
+    def all_teams(self):
+        return json.loads(json.dumps(self.teams))
+
 
 def _neg(text):
     # ordena texto em ordem decrescente sem depender de índice composto
@@ -170,6 +173,9 @@ class FirestoreStore:
 
     def put_team(self, tid, data):
         self.db.collection("teams").document(tid).set(data)
+
+    def all_teams(self):
+        return {s.id: s.to_dict() for s in self.db.collection("teams").stream()}
 
     def put_teams_batch(self, teams):
         items = list(teams.items())
