@@ -20,13 +20,23 @@
 <div class="notice" id="setupNotice" hidden></div>
 
 <nav class="tabs" role="tablist">
-  <button role="tab" class="tab on" data-tab="vs">Confronto</button>
+  <button role="tab" class="tab on" data-tab="jogos">Jogos</button>
+  <button role="tab" class="tab" data-tab="vs">Confronto</button>
   <button role="tab" class="tab" data-tab="live">Ao vivo</button>
-  <button role="tab" class="tab" data-tab="cov">Cobertura</button>
+  <button role="tab" class="tab" data-tab="cov">Dados</button>
 </nav>
 
 <main>
-  <div class="panel controls">
+<section id="tab-jogos">
+  <div class="panel jbar">
+    <div class="chips" id="chipsDay"></div>
+    <input id="jSearch" type="search" placeholder="Buscar time ou liga" autocomplete="off">
+    <label class="jcheck"><input type="checkbox" id="jOnlyData"> Só jogos com histórico</label>
+  </div>
+  <div id="jList"></div>
+</section>
+
+  <div class="panel controls" hidden>
     <label class="field"><span>Competição</span><select id="selComp"></select></label>
     <div class="row2">
       <label class="field a"><span>Equipe A</span><select id="selA"></select></label>
@@ -52,7 +62,7 @@
       </select></label>
   </div>
 
-<section id="tab-vs">
+<section id="tab-vs" hidden>
   <div id="result"></div>
 </section>
 

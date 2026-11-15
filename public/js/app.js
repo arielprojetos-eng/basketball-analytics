@@ -9,6 +9,8 @@ const NS = [5, 10, 20];
 
 const state = { comp: null, a: null, b: null, period: "q3", n: 20, venue: "all", scope: "comp" };
 let index = null;
+let agenda = null;
+const jstate = { day: 0, q: "", onlyData: false };
 
 try { Object.assign(state, JSON.parse(localStorage.getItem("ba-state") || "{}")); } catch {}
 const save = () => { try { localStorage.setItem("ba-state", JSON.stringify(state)); } catch {} };
@@ -27,9 +29,11 @@ async function init() {
   }
 
   try {
-    const [idx, s1, b1, s2, b2] = await Promise.all([getMeta("index"), getMeta("status"), getMeta("backfill"),
-      getMeta("status_apisports"), getMeta("backfill_apisports")]);
+    const [idx, s1, b1, s2, b2, ag] = await Promise.all([getMeta("index"), getMeta("status"), getMeta("backfill"),
+      getMeta("status_apisports"), getMeta("backfill_apisports"), getMeta("agenda")]);
     index = idx;
+    agenda = ag;
+    setupAgenda();
     const runs = [s1, s2].filter((x) => x && x.lastRun).sort((x, y) => (x.lastRun < y.lastRun ? 1 : -1));
     renderStatusChip(runs[0]);
     renderCoverage(idx, [
@@ -53,10 +57,11 @@ async function init() {
 
 function switchTab(t) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  $("tab-jogos").hidden = t !== "jogos";
   $("tab-vs").hidden = t !== "vs";
   $("tab-live").hidden = t !== "live";
   $("tab-cov").hidden = t !== "cov";
-  document.querySelector(".controls").hidden = t === "cov";
+  document.querySelector(".controls").hidden = t === "cov" || t === "jogos";
   $("fieldPeriod").hidden = t === "live";
 }
 
@@ -106,8 +111,8 @@ function buildControls() {
   syncChips();
 
   $("selComp").addEventListener("change", (e) => { state.comp = e.target.value; refillTeams(true); render(); });
-  $("selA").addEventListener("change", (e) => { state.a = e.target.value; render(); });
-  $("selB").addEventListener("change", (e) => { state.b = e.target.value; render(); });
+  $("selA").addEventListener("change", (e) => { state.a = e.target.value; state.aName = null; render(); });
+  $("selB").addEventListener("change", (e) => { state.b = e.target.value; state.bName = null; render(); });
   $("selVenue").addEventListener("change", (e) => { state.venue = e.target.value; render(); });
   $("selScope").addEventListener("change", (e) => { state.scope = e.target.value; render(); });
   $("chipsPeriod").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { state.period = b.dataset.v; syncChips(); render(); } });
@@ -142,7 +147,13 @@ async function render() {
   const my = ++token;
   const [ta, tb] = await Promise.all([getTeam(state.a), getTeam(state.b)]);
   if (my !== token) return;
-  if (!ta || !tb) { $("result").innerHTML = `<div class="empty">Equipe sem dados armazenados.</div>`; return; }
+  if (!ta || !tb) {
+    const miss = [!ta && (state.aName || "Equipe A"), !tb && (state.bName || "Equipe B")].filter(Boolean).join(" e ");
+    $("result").innerHTML = `<div class="empty">${esc(miss)} ainda sem jogos com placar por quarto armazenados. O histórico cresce a cada coleta.</div>`;
+    lastRows = null;
+    $("liveResult").innerHTML = "";
+    return;
+  }
 
   const cid = state.scope === "comp" ? state.comp : null;
   const vA = state.venue === "ah" ? "home" : state.venue === "ha" ? "away" : "all";
@@ -359,4 +370,95 @@ function renderLiveResult() {
       <table class="lines"><thead><tr><th>Linha</th><th>Chance estimada</th></tr></thead><tbody>${lineRows(R.finalTotal, R.sdFinal, R.finalTotal)}</tbody></table>
       <p class="hint">Probabilidade pela curva normal, com a incerteza dos quartos que faltam. Prorrogação não entra. É uma estimativa estatística e pode errar, sobretudo com poucos jogos na amostra.</p></div>
   </div>`;
+}
+
+
+// ---------- jogos do dia ----------
+const LIVE = new Set(["Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"]);
+const DONE = new Set(["FT", "AOT"]);
+const OFF = { POST: "Adiado", CANC: "Cancel.", SUSP: "Suspenso", AWD: "W.O.", ABD: "Abandon." };
+const localDay = (d) => d.toLocaleDateString("sv-SE"); // AAAA-MM-DD no fuso do aparelho
+
+function teamN(cid, tid) {
+  return index?.competitions?.[cid]?.teams?.[tid]?.n ?? 0;
+}
+
+function setupAgenda() {
+  const days = [[-1, "Ontem"], [0, "Hoje"], [1, "Amanhã"]];
+  $("chipsDay").innerHTML = days.map(([v, l]) => `<button class="chipbtn" data-v="${v}">${l}</button>`).join("");
+  const sync = () => document.querySelectorAll("#chipsDay .chipbtn").forEach((b) => b.classList.toggle("on", +b.dataset.v === jstate.day));
+  sync();
+  $("chipsDay").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { jstate.day = +b.dataset.v; sync(); renderAgenda(); } });
+  $("jSearch").addEventListener("input", (e) => { jstate.q = e.target.value.trim().toLowerCase(); renderAgenda(); });
+  $("jOnlyData").addEventListener("change", (e) => { jstate.onlyData = e.target.checked; renderAgenda(); });
+  $("jList").addEventListener("click", (e) => {
+    const b = e.target.closest(".game");
+    if (!b) return;
+    const g = (agenda?.games || []).find((x) => x.id === b.dataset.id);
+    if (g) openMatch(g);
+  });
+  renderAgenda();
+}
+
+function renderAgenda() {
+  const out = $("jList");
+  if (!agenda || !(agenda.games || []).length) {
+    out.innerHTML = `<div class="empty">A agenda de jogos aparece após a próxima coleta.</div>`;
+    return;
+  }
+  const target = new Date(); target.setDate(target.getDate() + jstate.day);
+  const day = localDay(target);
+  const q = jstate.q;
+  const games = agenda.games.filter((g) => {
+    if (localDay(new Date(g.t * 1000)) !== day) return false;
+    if (q && !`${g.hn} ${g.an} ${g.ln}`.toLowerCase().includes(q)) return false;
+    if (jstate.onlyData && !(teamN(g.lg, g.h) && teamN(g.lg, g.a))) return false;
+    return true;
+  });
+  const upd = agenda.updatedAt ? new Date(agenda.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "–";
+  const meta = `<p class="jmeta">${games.length} jogo(s). Agenda e placares atualizados na coleta de ${esc(upd)}; não é placar em tempo real.</p>`;
+  if (!games.length) { out.innerHTML = meta + `<div class="empty">Nenhum jogo encontrado com esses filtros.</div>`; return; }
+
+  const groups = new Map();
+  for (const g of games) {
+    if (!groups.has(g.lg)) groups.set(g.lg, { name: g.ln, tier: g.tier ?? 1, list: [] });
+    groups.get(g.lg).list.push(g);
+  }
+  const ordered = [...groups.values()].sort((x, y) => x.tier - y.tier || x.name.localeCompare(y.name, "pt-BR"));
+  out.innerHTML = meta + ordered.map((grp) => `<div class="league"><h4>${esc(grp.name)}<span>${grp.list.length}</span></h4>${
+    grp.list.map(gameRow).join("")}</div>`).join("");
+}
+
+function gameRow(g) {
+  const when = new Date(g.t * 1000);
+  let time = `<div class="gtime">${when.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</div>`;
+  if (LIVE.has(g.st)) time = `<div class="gtime live">${g.st === "HT" ? "Interv." : g.st}</div>`;
+  else if (DONE.has(g.st)) time = `<div class="gtime off">Fim${g.st === "AOT" ? " (prorr.)" : ""}</div>`;
+  else if (OFF[g.st]) time = `<div class="gtime off">${OFF[g.st]}</div>`;
+  const nh = teamN(g.lg, g.h), na = teamN(g.lg, g.a);
+  const hist = (n) => `<span class="hn ${n ? "ok" : ""}">${n ? n + " jogo" + (n > 1 ? "s" : "") : "sem histórico"}</span>`;
+  const started = g.hs != null && g.as != null && (LIVE.has(g.st) || DONE.has(g.st));
+  const score = started ? `<div class="gscore"><span class="${g.hs >= g.as ? "w" : "l"}">${g.hs}</span><span class="${g.as >= g.hs ? "w" : "l"}">${g.as}</span></div>` : "<div></div>";
+  return `<button class="game" data-id="${esc(g.id)}" aria-label="${esc(g.hn)} contra ${esc(g.an)}, ver histórico">
+    ${time}
+    <div class="gteams"><div><b>${esc(g.hn)}</b>${hist(nh)}</div><div><b>${esc(g.an)}</b>${hist(na)}</div></div>
+    ${score}</button>`;
+}
+
+function openMatch(g) {
+  const inIndex = !!index?.competitions?.[g.lg];
+  state.a = g.h; state.b = g.a; state.aName = g.hn; state.bName = g.an;
+  if (inIndex) {
+    state.comp = g.lg;
+    state.scope = "comp";
+    $("selComp").value = g.lg;
+    refillTeams();
+    // equipes ainda fora do índice continuam selecionadas pelo id, mesmo sem opção na lista
+    $("selA").value = g.h; $("selB").value = g.a;
+    state.a = g.h; state.b = g.a;
+  }
+  $("selScope").value = state.scope;
+  switchTab("vs");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  render();
 }

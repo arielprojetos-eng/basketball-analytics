@@ -39,7 +39,29 @@ COMPS.forEach((c, ci) => {
   });
 });
 
+function demoAgenda() {
+  const now = new Date(); now.setMinutes(0, 0, 0);
+  const base = Math.floor(now.getTime() / 1000);
+  const games = [];
+  let k = 0;
+  const st = ["FT", "Q3", "NS", "NS", "HT", "NS", "FT", "NS"];
+  COMPS.forEach((c, ci) => {
+    for (let i = 0; i + 1 < c.teams.length; i += 2) {
+      const s = st[k % st.length];
+      const off = s === "FT" ? -3 : s === "NS" ? 1 + (k % 4) : 0;
+      games.push({ id: `gm_ag_${k}`, t: base + off * 3600, st: s, lg: c.id, ln: c.name, tier: ci,
+        h: `tm_demo${ci}_${i}`, hn: c.teams[i], a: `tm_demo${ci}_${i + 1}`, an: c.teams[i + 1],
+        hs: s === "NS" ? null : 60 + k * 3, as: s === "NS" ? null : 58 + k * 2 });
+      k++;
+    }
+  });
+  games.push({ id: "gm_ag_novo", t: base + 7200, st: "NS", lg: "cp_demo3", ln: "Liga Demo C", tier: 1,
+    h: "tm_x1", hn: "Orcas", a: "tm_x2", an: "Pumas", hs: null, as: null });
+  return { updatedAt: new Date().toISOString(), games: games.sort((x, y) => x.t - y.t) };
+}
+
 export const demoMeta = (name) => {
+  if (name === "agenda") return demoAgenda();
   if (name === "index") return index;
   if (name === "status") {
     return { lastRun: "2026-11-15T08:17:00+00:00", callsThisRun: 31, usedToday: 62, pending: 38,
