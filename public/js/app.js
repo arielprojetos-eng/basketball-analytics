@@ -257,7 +257,7 @@ function chartCard(name, rows, S, k, label) {
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Pontos marcados no ${esc(label.toLowerCase())} nos últimos ${vals.length} jogos de ${esc(name)}">
       ${bars}
       <line x1="6" x2="${W - 6}" y1="${ay}" y2="${ay}" stroke="var(--text)" stroke-dasharray="4 4" opacity=".7"/>
-      <text x="${W - 6}" y="11" text-anchor="end">--- média ${f1(S.forAvg)}</text>
+      <text x="${W - 6}" y="11" text-anchor="end">--- ${state.recency ? "média ponderada" : "média"} ${f1(S.forAvg)}</text>
       <text x="10" y="${H - 6}">${esc(chrono[0]?.date.slice(5).split("-").reverse().join("/") || "")}</text>
       <text x="${W - 10}" y="${H - 6}" text-anchor="end">${esc(chrono.at(-1)?.date.slice(5).split("-").reverse().join("/") || "")}</text>
     </svg>
@@ -350,7 +350,7 @@ function renderLiveResult() {
   if (!played.length) { out.innerHTML = `<div class="empty" style="margin-top:14px">Informe o placar do 1º quarto (os dois times) para ver a projeção.</div>`; return; }
   const R = liveProjection(rowsA, rowsB, played, { recency: state.recency, priors, cid: state.comp });
   if (!R) {
-    out.innerHTML = `<div class="empty" style="margin-top:14px">Amostra insuficiente para projetar: cada equipe precisa de pelo menos 2 jogos com placar por quarto nos filtros escolhidos.</div>`;
+    out.innerHTML = `<div class="empty" style="margin-top:14px">Amostra insuficiente para projetar: cada equipe precisa de pelo menos 1 jogo com placar por quarto nos filtros escolhidos.</div>`;
     return;
   }
   const dev = (R.pace - 1) * 100;

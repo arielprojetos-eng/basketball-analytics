@@ -201,8 +201,9 @@ def run(client, store, cfg, today=None):
     summary = {"new": 0, "backfillNew": 0, "backfill": None, "agenda": 0, "note": ""}
     agenda = []
     try:
-        # Ontem, hoje e amanhã (UTC): amanhã cobre os jogos da noite no horário de Brasília (ex.: NBA).
-        for d in (today - timedelta(days=1), today, today + timedelta(days=1)):
+        # Ontem até depois de amanhã (UTC): cobre ontem, hoje e amanhã inteiros no horário de Brasília,
+        # inclusive os jogos noturnos (ex.: NBA às 21h-24h, que já caem no dia seguinte em UTC).
+        for d in (today - timedelta(days=1), today, today + timedelta(days=1), today + timedelta(days=2)):
             try:
                 rows = client.get("/games", {"date": d.isoformat(), "timezone": "UTC"})
             except PlanRestricted as e:
@@ -218,8 +219,14 @@ def run(client, store, cfg, today=None):
         quota["used"] = cfg.get("apisports", {}).get("daily_call_limit", 90)
     finally:
         if agenda:
+            # Janela fixa (início de ontem até o fim de amanhã em Brasília, com folga) para o documento não crescer.
+            from datetime import datetime, time, timezone as tz
+            start = int(datetime.combine(today - timedelta(days=1), time(0), tzinfo=tz.utc).timestamp()) - 6 * 3600
+            end = int(datetime.combine(today + timedelta(days=2), time(12), tzinfo=tz.utc).timestamp())
             seen, games = set(), []
             for x in sorted(agenda, key=lambda x: x["t"]):
+                if not start <= x["t"] <= end:
+                    continue
                 if x["id"] not in seen:
                     seen.add(x["id"]); games.append(x)
             store.set_meta("agenda", {"updatedAt": now_iso(), "games": games})

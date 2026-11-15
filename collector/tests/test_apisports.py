@@ -80,7 +80,7 @@ class ApiSportsTests(unittest.TestCase):
                "2026-11-16": [g(3, d="2026-11-16", status="NS"), g(1)]})
         st = MemoryStore()
         out = a.run(cl(s), st, CFG, today=date(2026, 11, 15))
-        self.assertEqual(s.calls[:3], ["2026-11-14", "2026-11-15", "2026-11-16"])
+        self.assertEqual(s.calls[:4], ["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17"])
         ag = st.meta["agenda"]["games"]
         self.assertEqual([x["id"] for x in ag], ["as_gm_1", "as_gm_2", "as_gm_3"])  # sem duplicar, em ordem
         self.assertEqual(out["agenda"], 3)
@@ -89,6 +89,13 @@ class ApiSportsTests(unittest.TestCase):
         self.assertEqual(ag[0]["h"], "as_tm_1")
         self.assertIsNone(st.get_team("as_tm_9"))
         self.assertEqual(st.get_team("as_tm_1")["n"], 1)  # agendados não entram no histórico
+
+    def test_agenda_janela(self):
+        far = g(50, d="2026-11-10", status="FT")  # fora da janela
+        s = S({"2026-11-15": [g(2, d="2026-11-15", status="NS"), far]})
+        st = MemoryStore()
+        a.run(cl(s), st, CFG, today=date(2026, 11, 15))
+        self.assertEqual([x["id"] for x in st.meta["agenda"]["games"]], ["as_gm_2"])
 
     def test_backfill_ate_o_limite(self):
         s = S({"2026-11-12": [g(7, d="2026-11-12")]})
@@ -107,7 +114,7 @@ class ApiSportsTests(unittest.TestCase):
         self.assertTrue(st.meta["backfill_apisports"]["blocked"])
         n = len(s.calls)
         a.run(cl(s), st, CFG, today=date(2026, 11, 15))
-        self.assertEqual(len(s.calls) - n, 3)  # só ontem, hoje e amanhã
+        self.assertEqual(len(s.calls) - n, 4)  # ontem até depois de amanhã
 
     def test_cota_e_orcamento(self):
         st = MemoryStore()
