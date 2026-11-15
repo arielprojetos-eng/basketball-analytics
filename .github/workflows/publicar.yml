@@ -1,0 +1,30 @@
+name: Publicar painel
+
+on:
+  push:
+    branches: [main]
+    paths: ["public/**", "firebase.json", "firestore.rules", "firestore.indexes.json", ".firebaserc"]
+  workflow_dispatch:
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Testes dos cálculos
+        run: node --test tests/stats.test.mjs
+      - name: Credencial
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+      - name: Deploy (Hosting e regras do Firestore)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: npx --yes firebase-tools@13 deploy --only "hosting,firestore" --non-interactive
+      - name: Limpar credencial
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
