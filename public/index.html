@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0e11">
+<title>Basketball Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="ball" aria-hidden="true"></span><span class="brand-name">Basketball <b>Analytics</b></span></div>
+  <div class="chip" id="statusChip">carregando</div>
+</header>
+
+<div class="demo" id="demoBanner" hidden>Dados fictícios de demonstração. Nada aqui vem de jogos reais.</div>
+<div class="notice" id="setupNotice" hidden></div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" class="tab on" data-tab="vs">Confronto</button>
+  <button role="tab" class="tab" data-tab="live">Ao vivo</button>
+  <button role="tab" class="tab" data-tab="cov">Cobertura</button>
+</nav>
+
+<main>
+  <div class="panel controls">
+    <label class="field"><span>Competição</span><select id="selComp"></select></label>
+    <div class="row2">
+      <label class="field a"><span>Equipe A</span><select id="selA"></select></label>
+      <label class="field b"><span>Equipe B</span><select id="selB"></select></label>
+    </div>
+
+    <div class="field" id="fieldPeriod"><span>Período</span>
+      <div class="chips scroll" id="chipsPeriod"></div></div>
+
+    <div class="row2">
+      <div class="field"><span>Últimos jogos</span><div class="chips" id="chipsN"></div></div>
+      <label class="field"><span>Cenário</span>
+        <select id="selVenue">
+          <option value="all">Todos os jogos</option>
+          <option value="ah">A em casa, B fora</option>
+          <option value="ha">A fora, B em casa</option>
+        </select></label>
+    </div>
+    <label class="field"><span>Amostra</span>
+      <select id="selScope">
+        <option value="comp">Somente a competição escolhida</option>
+        <option value="all">Todas as competições da equipe</option>
+      </select></label>
+  </div>
+
+<section id="tab-vs">
+  <div id="result"></div>
+</section>
+
+<section id="tab-live" hidden>
+  <div class="panel" id="liveForm"></div>
+  <div id="liveResult"></div>
+</section>
+
+<section id="tab-cov" hidden>
+  <div id="coverage"></div>
+</section>
+</main>
+
+<footer class="foot">Médias calculadas só com jogos já armazenados. A amostra real aparece sempre ao lado de cada número.</footer>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // O painel só lê os dados agregados. Gravação só pelo coletor (conta de serviço, que ignora estas regras).
+    match /teams/{id} { allow read: if true; allow write: if false; }
+    match /meta/{id}  { allow read: if true; allow write: if false; }
+    match /games/{id} { allow read, write: if false; }
+  }
+}

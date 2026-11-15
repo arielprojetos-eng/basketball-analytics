@@ -1,0 +1,6 @@
+.env
+chave-servico*.json
+*-firebase-adminsdk-*.json
+.firebase/
+node_modules/
+__pycache__/

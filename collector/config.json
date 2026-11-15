@@ -1,0 +1,35 @@
+{
+  "daily_call_limit": 92,
+  "per_run_call_limit": 30,
+  "keep_games_per_team": 60,
+  "discovery_days_back": 2,
+  "backfill_floor_days": 400,
+  "only_competitions": [],
+  "priority_competitions": [
+    "NBB",
+    "EuroLeague",
+    "EuroCup",
+    "ACB",
+    "Liga Endesa",
+    "NBA",
+    "WNBA",
+    "NBL",
+    "CBA",
+    "B.League",
+    "BSL",
+    "LNB",
+    "Lega",
+    "BBL",
+    "Adriatic",
+    "VTB"
+  ],
+  "apisports": {
+    "daily_call_limit": 90,
+    "per_run_call_limit": 25,
+    "backfill_floor_days": 400,
+    "finished_status": [
+      "FT",
+      "AOT"
+    ]
+  }
+}
