@@ -39,3 +39,9 @@ Abra o painel com `?demo` no final do endereço: usa dados fictícios, marcados 
 - **Backtest** (`collector/backtest.py`): roda uma vez por dia, na primeira coleta do dia. Para cada jogo armazenado, refaz a projeção usando só os jogos anteriores das duas equipes (mínimo de 3 de cada) e mede erro médio (simples e com recência), viés, Brier (modelo e frequência) e calibração. O resultado fica na aba Dados.
 - **Pace**: não implementado, porque exige posses de bola (box score), indisponíveis nos planos gratuitos.
 - **Prorrogação**: os quartos e o tempo regulamentar nunca incluem prorrogação; só o período "Jogo com prorrogação" inclui.
+
+## App no celular (PWA) e carregamento
+
+- O painel é um app instalável: `manifest.webmanifest`, ícones em `public/icons/` e `sw.js` (guarda a casca do app para abrir na hora). Ao mudar arquivos do painel, aumente `VERSION` em `public/sw.js` para os aparelhos pegarem a versão nova.
+- Os dados são lidos pela API REST do Firestore, sem o SDK do Firebase: uma requisição traz todos os documentos gerais. A última versão fica salva no aparelho (`localStorage`), então o app abre na hora e atualiza em segundo plano; sem internet, mostra os dados salvos.
+- No iPhone: abra o site no Safari, toque em Compartilhar e em "Adicionar à Tela de Início". Se já existia um atalho antigo, apague-o antes.

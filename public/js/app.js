@@ -1,4 +1,4 @@
-import { DEMO, CONFIGURED, getMeta, getTeam } from "./data.js";
+import { DEMO, CONFIGURED, getMetas, cachedMetas, getTeam } from "./data.js";
 import { PERIODS, sample, summarize, overPct, lineGrid, projections, liveProjection, probOver, shrunkSd, priorFor, centralLine } from "./stats.js";
 
 const $ = (id) => document.getElementById(id);
@@ -18,9 +18,17 @@ try { Object.assign(state, JSON.parse(localStorage.getItem("ba-state") || "{}"))
 const save = () => { try { localStorage.setItem("ba-state", JSON.stringify(state)); } catch {} };
 
 // ---------- inicialização ----------
+const META_NAMES = ["index", "status", "backfill", "status_apisports", "backfill_apisports", "agenda", "priors", "backtest"];
+const TITLES = { jogos: "Jogos", vs: "Confronto", live: "Ao vivo", cov: "Dados" };
+let currentTab = "jogos";
+let filtersOpen = false;
+let wired = false;
+
 async function init() {
   $("demoBanner").hidden = !DEMO;
-  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+  document.querySelectorAll(".dk").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+  $("btnFilters").addEventListener("click", () => { filtersOpen = !filtersOpen; switchTab(currentTab, true); });
+  switchTab("jogos", true);
 
   if (!CONFIGURED && !DEMO) {
     const n = $("setupNotice");
@@ -30,42 +38,69 @@ async function init() {
     return;
   }
 
-  try {
-    const [idx, s1, b1, s2, b2, ag] = await Promise.all([getMeta("index"), getMeta("status"), getMeta("backfill"),
-      getMeta("status_apisports"), getMeta("backfill_apisports"), getMeta("agenda")]);
-    index = idx;
-    agenda = ag;
-    [priors, backtestRes] = await Promise.all([getMeta("priors"), getMeta("backtest")]);
-    setupAgenda();
-    const runs = [s1, s2].filter((x) => x && x.lastRun).sort((x, y) => (x.lastRun < y.lastRun ? 1 : -1));
-    renderStatusChip(runs[0]);
-    renderCoverage(idx, backtestRes, [
-      { name: "API-Sports", status: s2, backfill: b2 },
-      { name: "Basketball API", status: s1, backfill: b1 },
-    ]);
-  } catch (e) {
-    $("statusChip").textContent = "erro ao ler dados";
-    $("result").innerHTML = `<div class="empty">Não foi possível ler o Firestore (${esc(e.message)}). Confira a configuração e as regras.</div>`;
-    return;
+  // 1) abre na hora com a última versão guardada no aparelho
+  const cached = cachedMetas();
+  if (cached) {
+    applyData(cached);
+    $("statusChip").classList.add("syncing");
   }
+  // 2) busca a versão atual em uma única requisição
+  try {
+    applyData(await getMetas(META_NAMES));
+  } catch (e) {
+    if (!cached) {
+      $("statusChip").textContent = "sem conexão";
+      $("jList").innerHTML = `<div class="empty">Não foi possível carregar os dados (${esc(e.message)}). Verifique a internet e abra de novo.</div>`;
+    } else {
+      $("statusChip").textContent = "offline · dados salvos";
+    }
+  } finally {
+    $("statusChip").classList.remove("syncing");
+  }
+}
 
+function applyData(m) {
+  index = m.index;
+  agenda = m.agenda;
+  priors = m.priors;
+  backtestRes = m.backtest;
+  const runs = [m.status, m.status_apisports].filter((x) => x && x.lastRun).sort((x, y) => (x.lastRun < y.lastRun ? 1 : -1));
+  renderStatusChip(runs[0]);
+  renderCoverage(index, backtestRes, [
+    { name: "API-Sports", status: m.status_apisports, backfill: m.backfill_apisports },
+    { name: "Basketball API", status: m.status, backfill: m.backfill },
+  ]);
+  if (!wired) { setupAgenda(); wireControls(); wired = true; }
+  else renderAgenda();
   if (!index || !Object.keys(index.competitions || {}).length) {
     $("result").innerHTML = `<div class="empty">Ainda não há jogos com placar por quarto armazenados. Rode o coletor e volte em alguns minutos.</div>`;
-    buildControls();
     return;
   }
-  buildControls();
+  fillControls();
   render();
 }
 
-function switchTab(t) {
-  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
-  $("tab-jogos").hidden = t !== "jogos";
-  $("tab-vs").hidden = t !== "vs";
-  $("tab-live").hidden = t !== "live";
-  $("tab-cov").hidden = t !== "cov";
-  document.querySelector(".controls").hidden = t === "cov" || t === "jogos";
+function switchTab(t, instant) {
+  const changed = t !== currentTab;
+  currentTab = t;
+  document.querySelectorAll(".dk").forEach((b) => {
+    const on = b.dataset.tab === t;
+    b.classList.toggle("on", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
+  $("screenTitleText").textContent = TITLES[t];
+  for (const [k, id] of [["jogos", "tab-jogos"], ["vs", "tab-vs"], ["live", "tab-live"], ["cov", "tab-cov"]]) {
+    const el = $(id);
+    el.hidden = k !== t;
+    if (k === t && changed && !instant) { el.classList.remove("enter"); void el.offsetWidth; el.classList.add("enter"); }
+  }
+  const match = t === "vs" || t === "live";
+  $("matchBar").hidden = !match;
+  $("controlsPanel").hidden = !(match && filtersOpen);
+  $("btnFilters").classList.toggle("on", filtersOpen);
+  $("btnFilters").setAttribute("aria-expanded", String(filtersOpen));
   $("fieldPeriod").hidden = t === "live";
+  if (changed && !instant) window.scrollTo({ top: 0 });
 }
 
 function renderStatusChip(s) {
@@ -100,28 +135,34 @@ function fillSelect(sel, items, current, label) {
   return sel.value;
 }
 
-function buildControls() {
+function fillControls() {
   const comps = index ? compEntries() : [];
   if (!comps.length) return;
   if (!comps.some(([id]) => id === state.comp)) state.comp = comps[0][0];
   fillSelect($("selComp"), comps.map(([id, c]) => [id, c.label]), state.comp);
+  const keepA = state.a, keepB = state.b;
   refillTeams();
-
-  $("chipsPeriod").innerHTML = PERIODS.map((p) => `<button class="chipbtn" data-v="${p.key}">${p.label}</button>`).join("");
-  $("chipsN").innerHTML = NS.map((n) => `<button class="chipbtn" data-v="${n}">${n}</button>`).join("");
+  // equipes vindas da tela de jogos podem não estar na lista: mantém a escolha
+  if (keepA && state.a !== keepA && state.aName) state.a = keepA;
+  if (keepB && state.b !== keepB && state.bName) state.b = keepB;
   $("selVenue").value = state.venue;
   $("selScope").value = state.scope;
   $("selRecency").value = state.recency ? "1" : "0";
-  $("selRecency").addEventListener("change", (e) => { state.recency = e.target.value === "1"; render(); });
   syncChips();
+}
 
-  $("selComp").addEventListener("change", (e) => { state.comp = e.target.value; refillTeams(true); render(); });
+function wireControls() {
+  $("chipsPeriod").innerHTML = PERIODS.map((p) => `<button class="chipbtn" data-v="${p.key}">${p.label}</button>`).join("");
+  $("chipsN").innerHTML = NS.map((n) => `<button class="chipbtn" data-v="${n}">${n}</button>`).join("");
+  $("selRecency").addEventListener("change", (e) => { state.recency = e.target.value === "1"; render(); });
+  $("selComp").addEventListener("change", (e) => { state.comp = e.target.value; state.aName = state.bName = null; refillTeams(true); render(); });
   $("selA").addEventListener("change", (e) => { state.a = e.target.value; state.aName = null; render(); });
   $("selB").addEventListener("change", (e) => { state.b = e.target.value; state.bName = null; render(); });
   $("selVenue").addEventListener("change", (e) => { state.venue = e.target.value; render(); });
   $("selScope").addEventListener("change", (e) => { state.scope = e.target.value; render(); });
   $("chipsPeriod").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { state.period = b.dataset.v; syncChips(); render(); } });
   $("chipsN").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { state.n = +b.dataset.v; syncChips(); render(); } });
+  syncChips();
 }
 
 function refillTeams(reset) {
@@ -147,11 +188,26 @@ function syncChips() {
 let token = 0;
 let lastRows = null;
 const liveVals = [{ a: "", b: "" }, { a: "", b: "" }, { a: "", b: "" }];
+function setMatchBar(ta, tb) {
+  const comp = index?.competitions?.[state.comp];
+  $("mbComp").textContent = comp?.name || state.compName || "";
+  $("mbA").textContent = ta?.name || state.aName || "Equipe A";
+  $("mbB").textContent = tb?.name || state.bName || "Equipe B";
+}
+
 async function render() {
   save();
   const my = ++token;
-  const [ta, tb] = await Promise.all([getTeam(state.a), getTeam(state.b)]);
+  setMatchBar(null, null);
+  let ta, tb;
+  try {
+    [ta, tb] = await Promise.all([getTeam(state.a), getTeam(state.b)]);
+  } catch (e) {
+    if (my === token) $("result").innerHTML = `<div class="empty">Sem conexão para carregar as equipes (${esc(e.message)}).</div>`;
+    return;
+  }
   if (my !== token) return;
+  setMatchBar(ta, tb);
   if (!ta || !tb) {
     const miss = [!ta && (state.aName || "Equipe A"), !tb && (state.bName || "Equipe B")].filter(Boolean).join(" e ");
     $("result").innerHTML = `<div class="empty">${esc(miss)} ainda sem jogos com placar por quarto armazenados. O histórico cresce a cada coleta.</div>`;
@@ -313,7 +369,6 @@ function renderCoverage(idx, bt, sources) {
       <tbody>${rows || `<tr><td colspan="4">Sem dados ainda.</td></tr>`}</tbody></table></div></div>`;
 }
 
-init();
 
 
 // ---------- ao vivo ----------
@@ -431,8 +486,12 @@ function teamN(cid, tid) {
 
 function setupAgenda() {
   const days = [[-1, "Ontem"], [0, "Hoje"], [1, "Amanhã"]];
-  $("chipsDay").innerHTML = days.map(([v, l]) => `<button class="chipbtn" data-v="${v}">${l}</button>`).join("");
-  const sync = () => document.querySelectorAll("#chipsDay .chipbtn").forEach((b) => b.classList.toggle("on", +b.dataset.v === jstate.day));
+  $("chipsDay").innerHTML = days.map(([v, l]) => `<button class="segbtn" role="tab" data-v="${v}">${l}</button>`).join("");
+  const sync = () => document.querySelectorAll("#chipsDay .segbtn").forEach((b) => {
+    const on = +b.dataset.v === jstate.day;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+  });
   sync();
   $("chipsDay").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { jstate.day = +b.dataset.v; sync(); renderAgenda(); } });
   $("jSearch").addEventListener("input", (e) => { jstate.q = e.target.value.trim().toLowerCase(); renderAgenda(); });
@@ -449,20 +508,21 @@ function setupAgenda() {
 function renderAgenda() {
   const out = $("jList");
   if (!agenda || !(agenda.games || []).length) {
+    $("todayCard").innerHTML = "";
     out.innerHTML = `<div class="empty">A agenda de jogos aparece após a próxima coleta.</div>`;
     return;
   }
   const target = new Date(); target.setDate(target.getDate() + jstate.day);
   const day = localDay(target);
   const q = jstate.q;
-  const games = agenda.games.filter((g) => {
-    if (localDay(new Date(g.t * 1000)) !== day) return false;
+  const ofDay = agenda.games.filter((g) => localDay(new Date(g.t * 1000)) === day);
+  renderToday(ofDay, target);
+  const games = ofDay.filter((g) => {
     if (q && !`${g.hn} ${g.an} ${g.ln}`.toLowerCase().includes(q)) return false;
     if (jstate.minN && Math.min(teamN(g.lg, g.h), teamN(g.lg, g.a)) < jstate.minN) return false;
     return true;
   });
-  const upd = agenda.updatedAt ? new Date(agenda.updatedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "–";
-  const meta = `<p class="jmeta">${games.length} jogo(s). Agenda e placares atualizados na coleta de ${esc(upd)}; não é placar em tempo real.</p>`;
+  const meta = games.length === ofDay.length ? "" : `<p class="jmeta">${games.length} de ${ofDay.length} jogos com esses filtros.</p>`;
   if (!games.length) { out.innerHTML = meta + `<div class="empty">Nenhum jogo encontrado com esses filtros.</div>`; return; }
 
   const groups = new Map();
@@ -473,6 +533,24 @@ function renderAgenda() {
   const ordered = [...groups.values()].sort((x, y) => x.tier - y.tier || x.name.localeCompare(y.name, "pt-BR"));
   out.innerHTML = meta + ordered.map((grp) => `<div class="league"><h4>${esc(grp.name)}<span>${grp.list.length}</span></h4>${
     grp.list.map(gameRow).join("")}</div>`).join("");
+}
+
+function renderToday(ofDay, target) {
+  const label = ["Ontem", "Hoje", "Amanhã"][jstate.day + 1];
+  const date = target.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  const live = ofDay.filter((g) => LIVE.has(g.st)).length;
+  const done = ofDay.filter((g) => DONE.has(g.st)).length;
+  const ready = ofDay.filter((g) => Math.min(teamN(g.lg, g.h), teamN(g.lg, g.a)) >= 5).length;
+  const next = ofDay.filter((g) => g.st === "NS" && g.t * 1000 > Date.now()).sort((a, b) => a.t - b.t)[0];
+  const upd = agenda.updatedAt ? new Date(agenda.updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "–";
+  const stat = (v, l, cls = "") => `<div class="ts ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  $("todayCard").innerHTML = `
+    <div class="td-head"><span class="td-day">${label}</span><span class="td-date">${esc(date)}</span></div>
+    <div class="td-main"><b>${ofDay.length}</b><span>jogo${ofDay.length === 1 ? "" : "s"}${next && jstate.day === 0 ? ` · próximo às ${new Date(next.t * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : ""}</span></div>
+    <div class="td-stats">
+      ${stat(live, "ao vivo", live ? "live" : "")}${stat(done, "encerrados")}${stat(ready, "com 5+ jogos de histórico", ready ? "ready" : "")}
+    </div>
+    <p class="td-note">Placares atualizados na coleta das ${esc(upd)}; não é tempo real.</p>`;
 }
 
 function gameRow(g) {
@@ -495,7 +573,7 @@ function gameRow(g) {
 
 function openMatch(g) {
   const inIndex = !!index?.competitions?.[g.lg];
-  state.a = g.h; state.b = g.a; state.aName = g.hn; state.bName = g.an;
+  state.a = g.h; state.b = g.a; state.aName = g.hn; state.bName = g.an; state.compName = g.ln;
   if (inIndex) {
     state.comp = g.lg;
     state.scope = "comp";
@@ -506,9 +584,9 @@ function openMatch(g) {
     state.a = g.h; state.b = g.a;
   }
   $("selScope").value = state.scope;
-  $("selRecency").value = state.recency ? "1" : "0";
-  $("selRecency").addEventListener("change", (e) => { state.recency = e.target.value === "1"; render(); });
   switchTab("vs");
-  window.scrollTo({ top: 0, behavior: "smooth" });
   render();
 }
+
+// Inicia só depois de todo o módulo carregado (a abertura com dados guardados é síncrona).
+init();
