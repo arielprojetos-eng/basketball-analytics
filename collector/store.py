@@ -160,7 +160,6 @@ class FirestoreStore:
         return [s.to_dict() for s in self._pending_query().limit(limit).stream()]
 
     def count_pending(self):
-        from google.cloud.firestore_v1.base_aggregation import AggregationQuery  # noqa: F401
 
         agg = self._pending_query().count(alias="n").get()
         return int(agg[0][0].value)
