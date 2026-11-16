@@ -173,13 +173,14 @@ def agenda_entry(g, cfg):
     }
 
 
-def backfill(client, store, cfg, reserve=0):
+def backfill(client, store, cfg, reserve=0, today=None):
     """Volta um dia por chamada enquanto houver orçamento. Para se o plano bloquear."""
+    today = today or today_utc()
     state = store.get_meta("backfill_apisports")
     if state.get("blocked"):
         return 0, "blocked"
-    floor = today_utc() - timedelta(days=cfg.get("apisports", {}).get("backfill_floor_days", 400))
-    nxt = date.fromisoformat(state["nextDate"]) if state.get("nextDate") else today_utc() - timedelta(days=2)
+    floor = today - timedelta(days=cfg.get("apisports", {}).get("backfill_floor_days", 400))
+    nxt = date.fromisoformat(state["nextDate"]) if state.get("nextDate") else today - timedelta(days=2)
     new = 0
     try:
         while client.remaining() > reserve and nxt >= floor:
@@ -211,7 +212,7 @@ def run(client, store, cfg, today=None):
                 continue
             summary["new"] += ingest_rows(store, cfg, rows)
             agenda.extend(x for x in (agenda_entry(g, cfg) for g in rows) if x)
-        summary["backfillNew"], summary["backfill"] = backfill(client, store, cfg)
+        summary["backfillNew"], summary["backfill"] = backfill(client, store, cfg, today=today)
     except BudgetExhausted:
         summary["note"] = summary["note"] or "orçamento da execução esgotado"
     except QuotaExceeded as e:

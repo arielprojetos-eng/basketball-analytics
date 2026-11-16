@@ -151,11 +151,12 @@ def update_index(store, game, teams_by_id):
 
 # ---------- etapas ----------
 
-def discover(client, store, cfg, days_back):
-    start = today_utc() - timedelta(days=days_back)
+def discover(client, store, cfg, days_back, today=None):
+    today = today or today_utc()
+    start = today - timedelta(days=days_back)
     games = client.paginate(
         "/games",
-        {"from": start.isoformat(), "to": today_utc().isoformat(), "status": "final"},
+        {"from": start.isoformat(), "to": today.isoformat(), "status": "final"},
         max_pages=6,
     )
     return ingest_listing(store, games, cfg)
@@ -219,14 +220,15 @@ def record_game(store, game, periods, cfg):
     return new_h or new_a
 
 
-def backfill_step(client, store, cfg):
+def backfill_step(client, store, cfg, today=None):
     """Tenta buscar um dia anterior. Se o plano gratuito bloquear, registra e para."""
+    today = today or today_utc()
     state = store.get_meta("backfill")
     if state.get("blocked"):
         return "blocked"
-    floor = today_utc() - timedelta(days=cfg.get("backfill_floor_days", 400))
+    floor = today - timedelta(days=cfg.get("backfill_floor_days", 400))
     nxt = state.get("nextDate")
-    d = date.fromisoformat(nxt) if nxt else today_utc() - timedelta(days=cfg.get("discovery_days_back", 2) + 1)
+    d = date.fromisoformat(nxt) if nxt else today - timedelta(days=cfg.get("discovery_days_back", 2) + 1)
     if d < floor:
         return "done"
     try:
@@ -245,20 +247,21 @@ def backfill_step(client, store, cfg):
 # ---------- orquestração ----------
 
 def run(client, store, cfg, today=None):
-    today = (today or today_utc()).isoformat()
+    day = today or today_utc()
+    today = day.isoformat()
     quota = store.get_meta("quota")
     if quota.get("date") != today:
         quota = {"date": today, "used": 0}
     summary = {"new": 0, "details": 0, "backfill": None, "note": ""}
     try:
         try:
-            summary["new"] = discover(client, store, cfg, cfg.get("discovery_days_back", 2))
+            summary["new"] = discover(client, store, cfg, cfg.get("discovery_days_back", 2), day)
             room = client.remaining() - 1
             if room > 0:
                 summary["details"] = fetch_details(client, store, cfg, room)
             pending = store.count_pending()
             if pending == 0 and client.remaining() >= 8:
-                summary["backfill"] = backfill_step(client, store, cfg)
+                summary["backfill"] = backfill_step(client, store, cfg, day)
         except BudgetExhausted:
             summary["note"] = "orçamento da execução esgotado"
         except QuotaExceeded:
