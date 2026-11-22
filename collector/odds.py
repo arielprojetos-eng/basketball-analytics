@@ -138,13 +138,14 @@ def run_odds(client, store, cfg, now_ts=None):
     quota = store.get_meta("quota_apisports")
     if quota.get("date") != today:
         quota = {"date": today, "used": 0}
-    found, note = {}, ""
+    found, note, blocked = {}, "", None
     try:
         for league, season in leagues:
             try:
                 rows = client.get("/odds", {"league": league, "season": season})
             except PlanRestricted as e:
                 note = f"plano bloqueou odds: {e}"[:300]
+                blocked = acfg.get("plan", "free")   # não tenta de novo até o plano mudar
                 break
             for item in rows:
                 gid = f"as_gm_{(item.get('game') or {}).get('id')}"
@@ -163,8 +164,11 @@ def run_odds(client, store, cfg, now_ts=None):
         old = store.get_meta("odds").get("games") or {}
         keep = {k: v for k, v in old.items() if (v.get("t") or 0) > now_ts - KEEP_PAST}
         keep.update(found)
-        store.set_meta("odds", {"updatedAt": now_iso(), "games": keep, "calls": client.calls,
-                                "leagues": [f"{lg}/{ss}" for lg, ss in leagues], "note": note})
+        doc = {"updatedAt": now_iso(), "games": keep, "calls": client.calls,
+               "leagues": [f"{lg}/{ss}" for lg, ss in leagues], "note": note}
+        if blocked:
+            doc["blockedPlan"] = blocked
+        store.set_meta("odds", doc)
         by_day = defaultdict(dict)
         for gid, v in found.items():
             if v.get("t"):

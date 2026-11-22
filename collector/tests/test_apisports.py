@@ -241,6 +241,9 @@ class OddsSession:
         self.by_league, self.calls = by_league, []
 
     def get(self, url, params=None, headers=None, timeout=None):
+        if url.endswith("/games"):   # atualização da agenda feita antes das odds
+            self.calls.append(("games", params["date"]))
+            return R({"errors": [], "response": []})
         assert url.endswith("/odds")
         self.calls.append((params["league"], params["season"]))
         return R({"errors": [], "response": self.by_league.get(params["league"], [])})
@@ -318,6 +321,34 @@ class OddsTests(unittest.TestCase):
         st.set_meta("quota_apisports", {"date": m.today_utc().isoformat(), "used": 50})
         budget, _ = m.odds_budget(st, a.effective(m.load_config())["apisports"])
         self.assertEqual(budget, 4)   # plano gratuito: 4 chamadas por dia
+
+    def test_plano_que_recusa_odds_nao_e_tentado_de_novo(self):
+        from collector import main as m
+        from collector.odds import run_odds
+
+        class Recusa:
+            calls = 0
+
+            def get(self, url, params=None, headers=None, timeout=None):
+                Recusa.calls += 1
+                return R({"errors": {"plan": "Free plans do not have access to this season, try from 2022 to 2024."}, "response": []})
+
+        st = MemoryStore()
+        st.set_meta("agenda", {"games": [{"id": "as_gm_7", "t": NOON + 3600, "st": "NS", "lg": "as_cp_12", "ss": "2026-2027", "tier": 0}]})
+        cfg = a.effective(m.load_config())
+        out = run_odds(cl(Recusa(), budget=4), st, cfg, now_ts=NOON)
+        self.assertEqual(Recusa.calls, 1)                    # para na primeira recusa
+        self.assertIn("plano", out["note"])
+        self.assertEqual(st.meta["odds"]["blockedPlan"], "free")
+        made = []
+        m.run_odds_cli(m.load_config(), store=st, client_factory=lambda b: made.append(b), now_ts=NOON)
+        self.assertEqual(made, [])                           # nem a agenda é atualizada à toa
+        pro = {**m.load_config()}
+        pro["apisports"] = {**pro["apisports"], "plan": "pro"}
+        st.set_meta("quota_apisports", {"date": m.today_utc().isoformat(), "used": 0})
+        tried = []
+        m.run_odds_cli(pro, store=st, client_factory=lambda b: tried.append(b) or cl(OddsSession({}), budget=b), now_ts=NOON)
+        self.assertTrue(tried)                               # trocou de plano: tenta de novo
 
     def test_agenda_traz_temporada(self):
         self.assertEqual(a.agenda_entry(g(5), CFG)["ss"], "2025-2026")

@@ -100,12 +100,7 @@ jobs:
       - run: pip install -r collector/requirements.txt
       - name: Testes
         run: python -m unittest collector.tests.test_collector collector.tests.test_apisports collector.tests.test_model
-      - name: Agenda atualizada (temporada de cada liga, exigida pelas odds)
-        env:
-          APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: python -m collector.main run --only live --force --max-calls 1
-      - name: Odds de Over/Under
+      - name: Odds de Over/Under (atualiza a agenda antes; nada faz se o plano não liberar odds)
         env:
           APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

@@ -8,7 +8,7 @@ Dono: Ariel Carvalho (Recife/PE). Responda sempre em português do Brasil, tom f
 - **Coleta (Python, `collector/`)**: roda no GitHub Actions (`.github/workflows/coletor.yml`). Três jobs:
   coleta completa + backtest (cron `17 2,8,14,20 * * *` UTC) e ao vivo (cron `*/10 * * * *`, `run --only live`:
   só atualiza placares com quartos parciais em `meta/agenda`, 1 a 2 chamadas, sem gravar nas equipes).
-  e odds (cron `40 15 * * *` e a cada push em `collector/odds.py`: `run --only live --force --max-calls 1` e `run --only odds`).
+  e odds (cron `40 15 * * *` e a cada push em `collector/odds.py`: `run --only odds`, que atualiza a agenda antes; se o plano recusar as odds, grava `blockedPlan` e não tenta de novo até o plano mudar).
   Antes de coletar, roda os testes; se algum falhar, a coleta é cancelada.
   - Plano da API-Sports em `collector/config.json` (`apisports.plan`: "free" ou "pro"; limites em `apisports.plans`).
     O coletor só chama a API quando passou o intervalo mínimo do plano (gratuito 30 min, pago 10 min).
@@ -17,7 +17,7 @@ Dono: Ariel Carvalho (Recife/PE). Responda sempre em português do Brasil, tom f
   - `api.py` + `main.py`: Basketball API (`api.basketballapi.net/v1`, Bearer). Gratuito: 100/dia, 10/min, só ontem/hoje; quartos só em `/games/{id}`.
   - `store.py`: `FirestoreStore` (firebase-admin), `BufferedStore` (agrupa gravações para caber na cota grátis de 20 mil gravações/dia), `MemoryStore` (testes).
   - `model.py`: fórmulas do modelo (espelho exato de `public/js/stats.js`; mudou uma, mude a outra). Modelo original intacto (referência) e modelo v2 (em uso).
-  - `odds.py`: odds de Over/Under (fase 1, só grava; o painel ainda não mostra). A API atualiza odds 1 vez por dia, de 1 a 7 dias antes do jogo; 1 chamada por liga e temporada. Grava `meta/odds` e `odds_hist/{data}` (linha de consenso entre casas e chance de Over sem margem, por período q1..q4, h1, h2, total). Gratuito: 4 chamadas/dia.
+  - `odds.py`: odds de Over/Under (fase 1, só grava; o painel ainda não mostra). A API atualiza odds 1 vez por dia, de 1 a 7 dias antes do jogo; 1 chamada por liga e temporada. Grava `meta/odds` e `odds_hist/{data}` (linha de consenso entre casas e chance de Over sem margem, por período q1..q4, h1, h2, total). O plano gratuito NÃO libera odds da temporada atual (só 2022 a 2024, conferido em 22/11/2026): as odds dependem do plano pago.
   - `walkforward.py`: motor walk-forward compartilhado (só jogos anteriores; jogos simultâneos não se enxergam; duplicatas entre fontes e jogos inválidos fora).
   - `backtest.py`: backtest diário do v2 com o original e a média da liga lado a lado; grava `meta/backtest` e `meta/priors.v2`. Veredito de calibração por ECE com mínimo de 300 JOGOS distintos (não casos).
 - **Banco (Firestore, projeto `basketball-analytics-233f9`, região southamerica-east1)**

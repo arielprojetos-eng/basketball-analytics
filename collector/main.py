@@ -340,7 +340,7 @@ def odds_budget(store, acfg, override=None):
     return max(0, min(override or acfg.get("odds_calls_per_run", 4), left)), used
 
 
-def run_odds_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None):
+def run_odds_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None, refresh_agenda=True):
     """Coleta diária de odds de Over/Under (só API-Sports). Fase 1: só grava, o painel não mostra."""
     from . import apisports, odds
     key = os.environ.get("APISPORTS_KEY")
@@ -349,6 +349,13 @@ def run_odds_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=No
         return 2
     cfg = apisports.effective(cfg)
     store = store or BufferedStore(FirestoreStore())
+    plan = cfg["apisports"].get("plan", "free")
+    if store.get_meta("odds").get("blockedPlan") == plan:
+        print(f"odds: o plano {plan} não libera odds da temporada atual; nada a fazer até trocar de plano.")
+        return 0
+    if refresh_agenda:
+        # agenda recém-atualizada: traz a temporada de cada liga, exigida pelo endpoint de odds (1 chamada)
+        run_live_cli(cfg, 1, store=store, client_factory=client_factory, now_ts=now_ts, force=True)
     budget, used = odds_budget(store, cfg["apisports"], max_calls)
     if budget < 1:
         print(f"odds: sem cota livre (usadas {used}, reserva das demais coletas preservada).")

@@ -28,7 +28,8 @@ Painel de pontuação por quarto (médias, Over, projeções e modo Ao vivo), co
 ## Odds de Over/Under (fase 1: coleta silenciosa)
 
 - `collector/odds.py`, job "odds" do workflow: uma vez por dia (15:40 UTC), porque a API atualiza as odds uma vez por dia, de 1 a 7 dias antes do jogo.
-- Uma chamada por liga traz todos os jogos próximos dela. No plano gratuito são 4 chamadas por dia, nas ligas com mais jogos e mais prioridade nas próximas 36 h; no pago, 40.
+- Uma chamada por liga traz todos os jogos próximos dela: 40 chamadas por dia no plano pago, nas ligas com mais jogos e mais prioridade nas próximas 36 h.
+- **O plano gratuito não libera odds da temporada atual** (a API só permite 2022 a 2024 nele). Na primeira recusa o coletor anota o bloqueio e para de tentar; volta sozinho quando `apisports.plan` mudar para `"pro"`.
 - Por jogo e período (quartos, tempos e jogo) guarda a linha de consenso entre as casas e a chance de Over sem a margem da casa, em `meta/odds` e no histórico `odds_hist/{data}`.
 - O painel ainda não mostra nada. Depois de algumas semanas, o backtest vai comparar modelo e mercado nas linhas de fechamento; o alerta de "fora do padrão" só entra se o modelo mostrar vantagem real.
 
