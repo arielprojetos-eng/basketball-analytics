@@ -304,7 +304,7 @@ def live_budget(store, acfg, override=None):
     return max(0, min(override or acfg.get("live_calls_per_run", 2), left)), used
 
 
-def run_live_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None):
+def run_live_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None, force=False):
     """Varredura ao vivo (agendada a cada poucos minutos). Só API-Sports, só agenda."""
     import time
     from . import apisports
@@ -315,7 +315,7 @@ def run_live_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=No
     cfg = apisports.effective(cfg)
     store = store or BufferedStore(FirestoreStore())
     now_ts = time.time() if now_ts is None else now_ts
-    if not apisports.live_due(store, cfg, now_ts):
+    if not force and not apisports.live_due(store, cfg, now_ts):
         print(f"ao vivo: intervalo mínimo do plano {cfg['apisports']['plan']} "
               f"({cfg['apisports'].get('live_min_interval_minutes', 30)} min) ainda não passou.")
         return 0
@@ -331,17 +331,50 @@ def run_live_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=No
     return 0
 
 
+def odds_budget(store, acfg, override=None):
+    """Chamadas para as odds, preservando a reserva das demais coletas do dia."""
+    today = today_utc().isoformat()
+    quota = store.get_meta("quota_apisports")
+    used = quota.get("used", 0) if quota.get("date") == today else 0
+    left = acfg.get("daily_call_limit", 90) - used - acfg.get("odds_reserve", 12)
+    return max(0, min(override or acfg.get("odds_calls_per_run", 4), left)), used
+
+
+def run_odds_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None):
+    """Coleta diária de odds de Over/Under (só API-Sports). Fase 1: só grava, o painel não mostra."""
+    from . import apisports, odds
+    key = os.environ.get("APISPORTS_KEY")
+    if not key and client_factory is None:
+        print("Defina APISPORTS_KEY.", file=sys.stderr)
+        return 2
+    cfg = apisports.effective(cfg)
+    store = store or BufferedStore(FirestoreStore())
+    budget, used = odds_budget(store, cfg["apisports"], max_calls)
+    if budget < 1:
+        print(f"odds: sem cota livre (usadas {used}, reserva das demais coletas preservada).")
+        return 0
+    client = (client_factory or (lambda b: apisports.Client(key, budget=b)))(budget)
+    out = odds.run_odds(client, store, cfg, now_ts=now_ts)
+    print("odds:", json.dumps(out, ensure_ascii=False))
+    if hasattr(store, "flush"):
+        store.flush()
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--max-calls", type=int, default=None)
-    r.add_argument("--only", choices=["basketballapi", "apisports", "backtest", "live"], default=None)
+    r.add_argument("--only", choices=["basketballapi", "apisports", "backtest", "live", "odds"], default=None)
+    r.add_argument("--force", action="store_true", help="ao vivo: ignora o intervalo mínimo do plano (usado antes das odds)")
     args = ap.parse_args(argv)
 
     cfg = load_config()
     if args.only == "live":
-        return run_live_cli(cfg, args.max_calls)
+        return run_live_cli(cfg, args.max_calls, force=args.force)
+    if args.only == "odds":
+        return run_odds_cli(cfg, args.max_calls)
     key_bba = os.environ.get("BASKETBALL_API_KEY")
     key_as = os.environ.get("APISPORTS_KEY")
     if not key_bba and not key_as:

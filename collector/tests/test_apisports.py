@@ -228,6 +228,101 @@ class AoVivoTests(unittest.TestCase):
         self.assertEqual(calls, [])   # 90 - 75 - reserva 20 < 1: não chama a API
 
 
+def ou(name, lines):
+    """Mercado de Over/Under no formato da API: lines = [(linha, odd_over, odd_under)]."""
+    vals = []
+    for ln, o, u in lines:
+        vals += [{"value": f"Over {ln}", "odd": str(o)}, {"value": f"Under {ln}", "odd": str(u)}]
+    return {"id": 99, "name": name, "values": vals}
+
+
+class OddsSession:
+    def __init__(self, by_league):
+        self.by_league, self.calls = by_league, []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        assert url.endswith("/odds")
+        self.calls.append((params["league"], params["season"]))
+        return R({"errors": [], "response": self.by_league.get(params["league"], [])})
+
+
+class OddsTests(unittest.TestCase):
+    def test_mercados_por_periodo(self):
+        from collector.odds import period_of
+        self.assertEqual(period_of("Over/Under"), "total")
+        self.assertEqual(period_of("Over/Under (Including OT)"), "total")
+        self.assertEqual(period_of("Over/Under 1st Half"), "h1")
+        self.assertEqual(period_of("Over/Under 2nd Half"), "h2")
+        self.assertEqual(period_of("Over/Under 1st Qtr"), "q1")
+        self.assertEqual(period_of("Over/Under 3rd Quarter"), "q3")
+        self.assertIsNone(period_of("Home Team Over/Under"))
+        self.assertIsNone(period_of("Asian Handicap 1st Qtr"))
+        self.assertIsNone(period_of("Odd/Even 1st Half"))
+
+    def test_consenso_sem_margem(self):
+        from collector.odds import game_markets
+        item = {"game": {"id": 7}, "bookmakers": [
+            {"id": 1, "bets": [ou("Over/Under", [(170.5, 1.80, 2.00), (171.5, 1.90, 1.90), (172.5, 2.0, 1.8)]),
+                               ou("Over/Under 1st Qtr", [(43.5, 1.85, 1.95)])]},
+            {"id": 2, "bets": [ou("Over/Under", [(171.5, 1.95, 1.85)])]},
+            {"id": 3, "bets": [ou("Over/Under", [(172.5, 1.88, 1.92)])]},
+        ]}
+        m = game_markets(item)
+        self.assertEqual(m["total"]["line"], 171.5)          # mediana das linhas principais
+        self.assertEqual(m["total"]["books"], 3)
+        p1 = (1 / 1.9) / (1 / 1.9 + 1 / 1.9)
+        p2 = (1 / 1.95) / (1 / 1.95 + 1 / 1.85)
+        self.assertAlmostEqual(m["total"]["pOver"], round((p1 + p2) / 2, 4))
+        self.assertEqual((m["total"]["lo"], m["total"]["hi"]), (171.5, 172.5))
+        self.assertGreater(m["total"]["margin"], 0)
+        self.assertEqual(m["q1"]["line"], 43.5)
+        self.assertNotIn("h1", m)
+
+    def test_escolhe_ligas_proximas_e_prioritarias(self):
+        from collector.odds import pick_leagues
+        ag = [{"id": f"g{i}", "t": NOON + 3600, "st": "NS", "lg": "as_cp_12", "ss": "2026-2027", "tier": 0} for i in range(2)]
+        ag += [{"id": f"h{i}", "t": NOON + 7200, "st": "NS", "lg": "as_cp_116", "ss": "2026-2027", "tier": 1} for i in range(9)]
+        ag += [{"id": "x", "t": NOON + 7200, "st": "NS", "lg": "as_cp_5", "ss": "2026", "tier": 1}]
+        ag += [{"id": "old", "t": NOON - 60, "st": "FT", "lg": "as_cp_9", "ss": "2026", "tier": 0},
+               {"id": "far", "t": NOON + 3 * 86400, "st": "NS", "lg": "as_cp_8", "ss": "2026", "tier": 0},
+               {"id": "nos", "t": NOON + 3600, "st": "NS", "lg": "as_cp_7", "tier": 0}]  # sem temporada
+        self.assertEqual(pick_leagues(ag, NOON, 2), [("12", "2026-2027"), ("116", "2026-2027")])
+        self.assertEqual(len(pick_leagues(ag, NOON, 10)), 3)
+
+    def test_coleta_grava_painel_e_historico(self):
+        from collector.odds import run_odds
+        st = MemoryStore()
+        st.set_meta("agenda", {"games": [
+            {"id": "as_gm_7", "t": NOON + 3600, "st": "NS", "lg": "as_cp_12", "ss": "2026-2027", "tier": 0, "h": "as_tm_1", "a": "as_tm_2"}]})
+        st.set_meta("odds", {"games": {"as_gm_1": {"t": NOON - 86400, "m": {}}}})  # antigo: sai
+        item = {"game": {"id": 7}, "bookmakers": [{"id": 1, "bets": [ou("Over/Under", [(171.5, 1.9, 1.9)])]}]}
+        s = OddsSession({"12": [item]})
+        out = run_odds(cl(s, budget=4), st, CFG, now_ts=NOON)
+        self.assertEqual(s.calls, [("12", "2026-2027")])
+        self.assertEqual(out["games"], 1)
+        g = st.meta["odds"]["games"]
+        self.assertEqual(list(g), ["as_gm_7"])
+        self.assertEqual(g["as_gm_7"]["m"]["total"]["line"], 171.5)
+        self.assertEqual(g["as_gm_7"]["h"], "as_tm_1")
+        self.assertIn("as_gm_7", st.docs["odds_hist"]["2026-11-15"])
+        self.assertEqual(st.meta["quota_apisports"]["used"], 1)
+        self.assertEqual(st.teams, {})
+
+    def test_cli_respeita_reserva_e_plano(self):
+        from collector import main as m
+        st = MemoryStore()
+        st.set_meta("quota_apisports", {"date": m.today_utc().isoformat(), "used": 79})
+        calls = []
+        m.run_odds_cli(m.load_config(), store=st, client_factory=lambda b: calls.append(b), now_ts=NOON)
+        self.assertEqual(calls, [])   # 90 - 79 - reserva 12 < 1
+        st.set_meta("quota_apisports", {"date": m.today_utc().isoformat(), "used": 50})
+        budget, _ = m.odds_budget(st, a.effective(m.load_config())["apisports"])
+        self.assertEqual(budget, 4)   # plano gratuito: 4 chamadas por dia
+
+    def test_agenda_traz_temporada(self):
+        self.assertEqual(a.agenda_entry(g(5), CFG)["ss"], "2025-2026")
+
+
 class BufferTests(unittest.TestCase):
     def test_grava_cada_equipe_uma_vez(self):
         from collector.store import BufferedStore

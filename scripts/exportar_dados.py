@@ -11,6 +11,7 @@ Gera:
     dados/teams.json   documentos completos das equipes (até 60 jogos cada, com quartos)
     dados/meta.json    índice de competições, priors, backtest, agenda, status da coleta
     dados/jogos.csv    um jogo por linha (sem duplicar), com os 4 quartos de cada lado e prorrogação
+    dados/odds_hist.json  linhas de Over/Under de consenso por jogo e período, por data
     dados/RESUMO.txt   contagens rápidas para conferência
 """
 import csv
@@ -27,7 +28,7 @@ OUT = ROOT / "dados"
 PROJECT = "basketball-analytics-233f9"
 BASE = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents"
 META_NAMES = ["index", "status", "backfill", "status_apisports", "backfill_apisports",
-              "agenda", "priors", "backtest", "quota", "quota_apisports"]
+              "agenda", "priors", "backtest", "quota", "quota_apisports", "status_live", "odds"]
 
 
 def api_key():
@@ -83,6 +84,26 @@ def list_teams(key):
             return teams
 
 
+def list_odds_hist(key):
+    """Histórico diário de odds (odds_hist/{AAAA-MM-DD}), um documento por data de início dos jogos."""
+    out, token = {}, None
+    while True:
+        q = {"pageSize": 300, "key": key}
+        if token:
+            q["pageToken"] = token
+        try:
+            page = get(f"{BASE}/odds_hist?{urllib.parse.urlencode(q)}")
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404):
+                return out
+            raise
+        for d in page.get("documents", []):
+            out[d["name"].rsplit("/", 1)[-1]] = from_fields(d.get("fields"))
+        token = page.get("nextPageToken")
+        if not token:
+            return out
+
+
 def get_metas(key):
     out = {}
     for n in META_NAMES:
@@ -130,9 +151,12 @@ def main():
     teams = list_teams(key)
     print("Baixando metadados...")
     metas = get_metas(key)
+    print("Baixando histórico de odds...")
+    odds_hist = list_odds_hist(key)
     games = games_table(teams)
     (OUT / "teams.json").write_text(json.dumps(teams, ensure_ascii=False, indent=1), encoding="utf-8")
     (OUT / "meta.json").write_text(json.dumps(metas, ensure_ascii=False, indent=1), encoding="utf-8")
+    (OUT / "odds_hist.json").write_text(json.dumps(odds_hist, ensure_ascii=False, indent=1), encoding="utf-8")
     if games:
         with (OUT / "jogos.csv").open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=list(games[0].keys()))

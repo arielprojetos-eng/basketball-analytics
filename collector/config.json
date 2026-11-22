@@ -39,7 +39,9 @@
         "per_run_call_limit": 25,
         "live_min_interval_minutes": 30,
         "live_calls_per_run": 2,
-        "live_reserve": 20
+        "live_reserve": 20,
+        "odds_calls_per_run": 4,
+        "odds_reserve": 12
       },
       "pro": {
         "_nota": "Plano pago. Confira a cota diária do seu plano no painel da API-Sports e ajuste daily_call_limit. O limite real passa a ser a cota grátis de 20 mil gravações/dia do Firestore: por isso o retroativo anda no máximo backfill_days_per_run dias por coleta completa.",
@@ -48,6 +50,8 @@
         "live_min_interval_minutes": 10,
         "live_calls_per_run": 2,
         "live_reserve": 100,
+        "odds_calls_per_run": 40,
+        "odds_reserve": 100,
         "backfill_days_per_run": 5
       }
     }

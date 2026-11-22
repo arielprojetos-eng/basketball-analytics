@@ -25,6 +25,13 @@ Painel de pontuação por quarto (médias, Over, projeções e modo Ao vivo), co
 - O ritmo do jogo pesa 10%, 20% e 30% após o 1º, 2º e 3º quartos (escolhido no backtest). Ligas em tempos (NCAA masculina) usam o 1º tempo.
 - Com o app aberto, os placares são conferidos a cada 3 minutos.
 
+## Odds de Over/Under (fase 1: coleta silenciosa)
+
+- `collector/odds.py`, job "odds" do workflow: uma vez por dia (15:40 UTC), porque a API atualiza as odds uma vez por dia, de 1 a 7 dias antes do jogo.
+- Uma chamada por liga traz todos os jogos próximos dela. No plano gratuito são 4 chamadas por dia, nas ligas com mais jogos e mais prioridade nas próximas 36 h; no pago, 40.
+- Por jogo e período (quartos, tempos e jogo) guarda a linha de consenso entre as casas e a chance de Over sem a margem da casa, em `meta/odds` e no histórico `odds_hist/{data}`.
+- O painel ainda não mostra nada. Depois de algumas semanas, o backtest vai comparar modelo e mercado nas linhas de fechamento; o alerta de "fora do padrão" só entra se o modelo mostrar vantagem real.
+
 ## Plano pago da API-Sports
 
 1. Assine o plano no site da API-Sports. A chave costuma ser a mesma (Secret `APISPORTS_KEY`); se mudar, atualize o Secret.

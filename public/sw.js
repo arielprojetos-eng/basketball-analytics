@@ -3,11 +3,11 @@
 // Regra importante: HTML e JS precisam ser sempre da MESMA versão. Por isso:
 //  - na instalação, tudo é baixado direto do servidor (cache: "reload"), nunca do cache HTTP do navegador;
 //  - a página (navegação) vem primeiro da rede, com fallback para o cache se a rede demorar ou faltar.
-const VERSION = "ba-v8";
+const VERSION = "ba-v9";
 const SHELL = [
   "index.html", "css/style.css", "manifest.webmanifest",
   "js/app.js", "js/data.js", "js/stats.js", "js/firebase-config.js",
-  "icons/icon-192.png", "icons/apple-touch-icon.png",
+  "icons/icon-192.png", "icons/apple-touch-icon.png", "icons/favicon-48.png",
 ];
 const NAV_TIMEOUT = 3000;
 

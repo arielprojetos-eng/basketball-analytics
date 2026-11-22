@@ -5,5 +5,7 @@ service cloud.firestore {
     match /teams/{id} { allow read: if true; allow write: if false; }
     match /meta/{id}  { allow read: if true; allow write: if false; }
     match /games/{id} { allow read, write: if false; }
+    // Histórico de odds (linhas de mercado, sem dado pessoal): leitura pública para análise local.
+    match /odds_hist/{id} { allow read: if true; allow write: if false; }
   }
 }

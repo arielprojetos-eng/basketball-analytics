@@ -49,6 +49,11 @@ class MemoryStore:
     def all_teams(self):
         return json.loads(json.dumps(self.teams))
 
+    def merge_doc(self, collection, doc_id, data):
+        """Grava campos num documento de outra coleção, preservando os demais (ex.: odds_hist)."""
+        docs = self.__dict__.setdefault("docs", {})
+        docs.setdefault(collection, {}).setdefault(doc_id, {}).update(json.loads(json.dumps(data)))
+
 
 def _neg(text):
     # ordena texto em ordem decrescente sem depender de índice composto
@@ -176,6 +181,9 @@ class FirestoreStore:
 
     def all_teams(self):
         return {s.id: s.to_dict() for s in self.db.collection("teams").stream()}
+
+    def merge_doc(self, collection, doc_id, data):
+        self.db.collection(collection).document(doc_id).set(data, merge=True)
 
     def put_teams_batch(self, teams):
         items = list(teams.items())

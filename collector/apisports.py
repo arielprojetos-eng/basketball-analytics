@@ -171,6 +171,7 @@ def agenda_entry(g, cfg):
         "lg": f"as_cp_{league['id']}", "ln": name, "tier": competition_tier(name, cfg),
         "h": f"as_tm_{th['id']}", "hn": th.get("name"), "a": f"as_tm_{ta['id']}", "an": ta.get("name"),
         "hs": sh.get("total"), "as": sa.get("total"),
+        "ss": str(league.get("season") or ""),   # temporada: exigida pelo endpoint de odds
     }
     # Quartos (parciais, durante o jogo): permitem ao painel calcular as chances ao vivo sozinho.
     hq, aq = quarter_list(sh), quarter_list(sa)

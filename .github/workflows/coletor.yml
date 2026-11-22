@@ -12,10 +12,16 @@ on:
     # para "*/30 * * * *" (nas três ocorrências deste arquivo): a cada 10 min seriam ~4.300 min/mês,
     # acima dos 2.000 grátis, e o GitHub pararia também a coleta completa.
     - cron: "*/10 * * * *"
+    # Odds de Over/Under: a API atualiza uma vez por dia, então uma coleta diária basta.
+    - cron: "40 15 * * *"
+  # Roda as odds quando o coletor de odds muda (primeira execução e conferência após ajustes).
+  push:
+    branches: [main]
+    paths: ["collector/odds.py"]
   workflow_dispatch:
     inputs:
       modo:
-        description: "completa ou aovivo"
+        description: "completa, aovivo ou odds"
         required: false
         default: "completa"
       max_calls:
@@ -25,7 +31,7 @@ on:
 
 jobs:
   coletar:
-    if: github.event.schedule != '*/10 * * * *' && github.event.inputs.modo != 'aovivo'
+    if: github.event_name != 'push' && github.event.schedule != '*/10 * * * *' && github.event.schedule != '40 15 * * *' && github.event.inputs.modo != 'aovivo' && github.event.inputs.modo != 'odds'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:
@@ -76,3 +82,31 @@ jobs:
           APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: python -m collector.main run --only live
+
+  odds:
+    if: github.event.schedule == '40 15 * * *' || github.event_name == 'push' || github.event.inputs.modo == 'odds'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: coletor-odds
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+      - run: pip install -r collector/requirements.txt
+      - name: Testes
+        run: python -m unittest collector.tests.test_collector collector.tests.test_apisports collector.tests.test_model
+      - name: Agenda atualizada (temporada de cada liga, exigida pelas odds)
+        env:
+          APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python -m collector.main run --only live --force --max-calls 1
+      - name: Odds de Over/Under
+        env:
+          APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python -m collector.main run --only odds
