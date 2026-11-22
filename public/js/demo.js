@@ -49,9 +49,17 @@ function demoAgenda() {
     for (let i = 0; i + 1 < c.teams.length; i += 2) {
       const s = st[k % st.length];
       const off = s === "FT" ? -3 : s === "NS" ? 1 + (k % 4) : 0;
+      const r = rng(500 + k);
+      const q = () => 18 + Math.round(r() * 10);
+      // quartos parciais: Q3 em andamento (2 encerrados + parcial), intervalo, encerrado
+      const n = s === "FT" ? 4 : s === "Q3" ? 3 : s === "HT" ? 2 : 0;
+      const hq = [0, 1, 2, 3].map((i) => (i < n ? q() : null));
+      const aq = [0, 1, 2, 3].map((i) => (i < n ? q() : null));
+      if (s === "Q3") { hq[2] = 9; aq[2] = 7; }
+      const sum = (a) => a.reduce((t, x) => t + (x || 0), 0);
       games.push({ id: `gm_ag_${k}`, t: base + off * 3600, st: s, lg: c.id, ln: c.name, tier: ci,
         h: `tm_demo${ci}_${i}`, hn: c.teams[i], a: `tm_demo${ci}_${i + 1}`, an: c.teams[i + 1],
-        hs: s === "NS" ? null : 60 + k * 3, as: s === "NS" ? null : 58 + k * 2 });
+        hs: s === "NS" ? null : sum(hq), as: s === "NS" ? null : sum(aq), ...(n ? { hq, aq } : {}) });
       k++;
     }
   });
@@ -60,10 +68,44 @@ function demoAgenda() {
   return { updatedAt: new Date().toISOString(), games: games.sort((x, y) => x.t - y.t) };
 }
 
+// meta/priors.v2 calculado dos jogos fictícios, no mesmo formato que o backtest grava.
+function demoPriors() {
+  const keys = { q1: (x) => x[0], q2: (x) => x[1], q3: (x) => x[2], q4: (x) => x[3], h1: (x) => x[0] + x[1],
+    h2: (x) => x[2] + x[3], reg: (x) => x[0] + x[1] + x[2] + x[3] };
+  const stat = (v) => {
+    const m = v.reduce((a, b) => a + b, 0) / v.length;
+    return { n: v.length, mean: m, sd: Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1)) };
+  };
+  const comps = {}, all = {};
+  for (const c of COMPS) {
+    comps[c.id] = {};
+    const games = [...teams.values()].flatMap((t) => t.games.filter((g) => g.cid === c.id));
+    for (const [k, f] of Object.entries(keys)) {
+      const v = games.map((g) => f(g.pts) + f(g.oppPts));
+      const d = games.map((g) => f(g.pts) - f(g.oppPts));
+      comps[c.id][k] = { ...stat(v), home: 1, msd: stat(d).sd };
+      (all[k] ||= []).push(...v);
+    }
+  }
+  comps[COMPS[0].id].total = comps[COMPS[0].id].reg;
+  const g = Object.fromEntries(Object.entries(all).map(([k, v]) => [k, stat(v).mean]));
+  const pooled = Object.fromEntries(Object.entries(all).map(([k, v]) => [k, stat(v).sd]));
+  return { v2: { comps, gmean: { m: g, w: g }, pooled, msd: pooled, sdScale: { q1: 0.95, q2: 0.95, q3: 0.94, q4: 0.96, h1: 0.92, h2: 0.93, reg: 0.93 } } };
+}
+
 export const demoMeta = (name) => {
-  if (name === "agenda") return demoAgenda();
-  if (name === "priors") return null;
-  if (name === "backtest") return { games: 120, date: "2026-11-15", updatedAt: "2026-11-15T08:20:00+00:00",
+  if (name === "agenda") { const a = demoAgenda(); a.liveAt = a.updatedAt; return a; }
+  if (name === "priors") return demoPriors();
+  if (name === "status_live") return { lastRun: new Date().toISOString(), live: 2, plan: "free" };
+  if (name === "backtest") return { model: "v2", games: 420, updatedAt: "2026-11-15T08:20:00+00:00", calibrationGames: 420,
+    calibrationCases: 2400, ece: 0.021, calibrationStatus: "calibrado", duplicatesSkipped: 0,
+    params: { k_team: 4, k_comp: 3, k_sd: 40, minCalibGames: 300, liveWeights: { 1: 0.1, 2: 0.2, 3: 0.3 } },
+    periods: Object.fromEntries(["q1", "q2", "q3", "q4", "h1", "h2", "reg"].map((k, i) => [k, { n: 120, mae: 5.8 + i * 0.4, maeLiga: 6 + i * 0.45,
+      bias: 0.2, brier: 0.224, brierLiga: 0.231, nOrig: 80, maeOrig: 6.6 + i * 0.4, maeV2Same: 5.9 + i * 0.4, brierOrig: 0.241, brierV2Same: 0.223 }])),
+    calibration: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8].map((p, i) => ({ lo: p, hi: p + 0.1, n: 100 + 60 * (4 - Math.abs(i - 3.5)), p: p + 0.05, freq: p + 0.05 + (i % 2 ? 0.015 : -0.01) })),
+    byComp: [{ name: "Liga Demo A", n: 70, mae: 5.8, maeLiga: 6.1 }, { name: "Copa Demo B", n: 50, mae: 6.2, maeLiga: 6.3 }],
+    reference: { games: 40, ece: 0.064, calibrationStatus: "descalibrado" } };
+  if (name === "backtest_antigo") return { games: 120, date: "2026-11-15", updatedAt: "2026-11-15T08:20:00+00:00",
     params: { lastN: 10, minPrior: 3, halfLife: 8 },
     periods: { q1: { n: 120, maeSimple: 5.9, maeRecency: 6.1, bias: 0.4, brierModel: 0.232, brierFreq: 0.268 },
       q2: { n: 120, maeSimple: 6.0, maeRecency: 5.8, bias: -0.2, brierModel: 0.236, brierFreq: 0.271 },

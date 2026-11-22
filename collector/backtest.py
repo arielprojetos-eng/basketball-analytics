@@ -191,16 +191,183 @@ def run_backtest(teams, trace=None):
             "leakFree": True}
 
 
+# =====================================================================================
+# Backtest v2 (produção). O original (run_backtest) continua calculado como referência.
+# =====================================================================================
+V2_MIN_GAMES = 300      # jogos distintos avaliados nos quartos antes de dar veredito de calibração
+V2_BINS = 10
+V2_OFFS = (-4, -2, 0, 2, 4)
+V2_UNIT = {"q1": 1, "q2": 1, "q3": 1, "q4": 1, "h1": 1.5, "h2": 1.5, "reg": 3}
+
+
+def _league_ref(L):
+    """Referência simples: média da liga (com 3+ jogos) ou média global do gênero."""
+    return L["mean"] if L["n"] >= 3 else L["gmean"]
+
+
+class _RawPrior:
+    """Estatísticas sem filtro, como o modelo original usava (para a comparação ser fiel)."""
+
+    def __init__(self):
+        self.comp = defaultdict(lambda: defaultdict(Running))
+        self.glob = defaultdict(Running)
+
+    def add_raw(self, g):
+        for k in M.PERIODS:
+            v = M.value(g["e"], k, "sum")
+            self.comp[g["cid"]][k].add(v)
+            self.glob[k].add(v)
+
+
+def run_backtest_v2(teams, trace=None):
+    """Avalia o v2, o original (regra do painel) e a média da liga, jogo a jogo, sem olhar o futuro.
+
+    O veredito de calibração conta JOGOS distintos (as linhas e os quartos de um mesmo jogo são
+    correlacionados e não valem como casos independentes).
+    """
+    from . import walkforward as W
+
+    per = {k: defaultdict(float) for k in M.PERIODS}
+    bins = [[0, 0.0, 0.0] for _ in range(V2_BINS)]
+    calib_games = set()
+    comp = defaultdict(lambda: defaultdict(float))
+    z2 = defaultdict(lambda: [0, 0.0])        # k -> n, soma de z² (sem escala): escala final para o painel
+    online = defaultdict(lambda: [0, 0.0])    # idem, só com jogos anteriores: avaliação honesta da escala
+    raw = _RawPrior()
+    first = {}
+
+    def on_group(ctxs):
+        pending = []
+        for c in ctxs:
+            g = c["g"]
+            first.setdefault("date", g["date"])
+            if g["date"] == first["date"]:
+                continue   # 1º dia da base: nada se sabia antes
+            e = g["e"]
+            r20a = W.team_rows(teams[g["h"]], g["cid"], g["tip"], 20)
+            r20b = W.team_rows(teams[g["a"]], g["cid"], g["tip"], 20)
+            for k in M.PERIODS:
+                if not M.usable(e, k):
+                    continue
+                y = M.value(e, k, "sum")
+                L = c["league"].snapshot(g["cid"], g["women"], k)
+                L["scale"] = M.sd_scale(*online[k])
+                pr = M.project_v2(c["rowsA"], c["rowsB"], k, L)
+                if trace is not None:
+                    trace.append((g["gid"], k, round(pr["mean"], 6), round(pr["sd"], 6)))
+                mu, sd = pr["mean"], pr["sd"]
+                ref = _league_ref(L)
+                ref_sd = L["sd"] if L["n"] >= 15 and L["sd"] else L["pooled"]
+                line0 = math.floor(ref) + 0.5
+                d = per[k]
+                d["n"] += 1
+                d["abs"] += abs(mu - y)
+                d["err"] += mu - y
+                d["absLiga"] += abs(ref - y)
+                orig = None
+                if r20a and r20b:
+                    A, B = M.summarize(r20a, k), M.summarize(r20b, k)
+                    orig = (M.cross(A, B), M.shrunk_sd(A, B, walk_forward_prior(raw.comp, raw.glob, g["cid"], k)))
+                    d["nOrig"] += 1
+                    d["absOrig"] += abs(orig[0] - y)
+                    d["absV2o"] += abs(mu - y)
+                for off in V2_OFFS:
+                    line = line0 + off * V2_UNIT[k]
+                    hit = 1.0 if y > line else 0.0
+                    pm = M.prob_over(mu, sd, line)
+                    d["lines"] += 1
+                    d["brier"] += (pm - hit) ** 2
+                    d["brierLiga"] += (M.prob_over(ref, ref_sd, line) - hit) ** 2
+                    if orig:
+                        d["linesOrig"] += 1
+                        d["brierOrig"] += (M.prob_over(orig[0], orig[1], line) - hit) ** 2
+                        d["brierV2o"] += (pm - hit) ** 2
+                    if k in M.QUARTER_KEYS:
+                        b = bins[min(int(pm * V2_BINS), V2_BINS - 1)]
+                        b[0] += 1
+                        b[1] += pm
+                        b[2] += hit
+                        calib_games.add(g["gid"])
+                if k in M.QUARTER_KEYS:
+                    cc = comp[g["cid"]]
+                    cc["name"] = g["cname"]
+                    cc["n"] += 1
+                    cc["abs"] += abs(mu - y)
+                    cc["absLiga"] += abs(ref - y)
+                zz = ((y - mu) / (sd / L["scale"])) ** 2
+                pending.append((k, zz))
+                z2[k][0] += 1
+                z2[k][1] += zz
+        for k, zz in pending:   # só depois do horário inteiro: jogos simultâneos não se enxergam
+            online[k][0] += 1
+            online[k][1] += zz
+
+    info = W.walk(teams, on_group, extra_states=(raw,))
+
+    def r(x, nd=2):
+        return round(x, nd)
+
+    periods = {}
+    for k, d in per.items():
+        n = d["n"]
+        if not n:
+            periods[k] = {"n": 0}
+            continue
+        row = {"n": int(n), "mae": r(d["abs"] / n), "bias": r(d["err"] / n), "maeLiga": r(d["absLiga"] / n),
+               "brier": r(d["brier"] / d["lines"], 4), "brierLiga": r(d["brierLiga"] / d["lines"], 4),
+               "nOrig": int(d["nOrig"])}
+        if d["nOrig"]:
+            row.update({"maeOrig": r(d["absOrig"] / d["nOrig"]), "maeV2Same": r(d["absV2o"] / d["nOrig"]),
+                        "brierOrig": r(d["brierOrig"] / d["linesOrig"], 4),
+                        "brierV2Same": r(d["brierV2o"] / d["linesOrig"], 4)})
+        periods[k] = row
+    total = sum(b[0] for b in bins)
+    calibration = [{"lo": i / V2_BINS, "hi": (i + 1) / V2_BINS, "n": int(b[0]),
+                    "p": r(b[1] / b[0], 3) if b[0] else None, "freq": r(b[2] / b[0], 3) if b[0] else None}
+                   for i, b in enumerate(bins)]
+    ece = sum(b[0] / total * abs(b[1] / b[0] - b[2] / b[0]) for b in bins if b[0]) if total else None
+    ngames = len(calib_games)
+    if not total:
+        status = "sem dados"
+    elif ngames < V2_MIN_GAMES:
+        status = "amostra insuficiente"
+    elif ece <= ECE_OK:
+        status = "calibrado"
+    elif ece <= ECE_FAIR:
+        status = "aceitável"
+    else:
+        status = "descalibrado"
+    by_comp = sorted(({"cid": cid, "name": c["name"], "n": int(c["n"] / 4), "mae": r(c["abs"] / c["n"]),
+                       "maeLiga": r(c["absLiga"] / c["n"])} for cid, c in comp.items()), key=lambda x: -x["n"])[:20]
+    scale = {k: r(M.sd_scale(n, s), 4) for k, (n, s) in z2.items()}
+    scale["total"] = scale.get("reg", 1.0)
+    games = int(max((d["n"] for d in per.values()), default=0))
+    return {"model": "v2", "updatedAt": now_iso(), "games": games,
+            "params": {**M.V2, "minCalibGames": V2_MIN_GAMES,
+                       "liveWeights": {str(k): v for k, v in M.LIVE_WEIGHT_V2.items()}},
+            "periods": periods, "calibration": calibration, "calibrationGames": ngames,
+            "calibrationCases": int(total), "ece": r(ece, 4) if ece is not None else None,
+            "calibrationStatus": status, "byComp": by_comp, "sdScale": scale,
+            "duplicatesSkipped": info["duplicates"], "leakFree": True}, info["league"]
+
+
 def run(store, today_iso):
-    """Roda uma vez por dia. Lê todas as equipes (1 leitura por equipe) e grava 2 documentos."""
+    """Roda uma vez por dia. Lê todas as equipes (1 leitura por equipe) e grava 2 documentos.
+
+    meta/priors mantém os campos antigos (global, comps) e ganha "v2" (médias e dispersões por liga,
+    usadas pelo painel). meta/backtest passa a trazer o v2, com o original em "reference".
+    """
     state = store.get_meta("backtest")
     if state.get("date") == today_iso:
         return None
     teams = store.all_teams()
     priors = compute_priors(collect_games(teams))
     priors["updatedAt"] = now_iso()
-    result = run_backtest(teams)
+    result, league = run_backtest_v2(teams)
+    priors["v2"] = {**league.export(), "sdScale": result["sdScale"]}
+    ref = run_backtest(teams)
+    result["reference"] = {k: ref[k] for k in ("games", "periods", "ece", "calibrationStatus", "calibrationCases")}
     result["date"] = today_iso
     store.set_meta("priors", priors)
     store.set_meta("backtest", result)
-    return {"teams": len(teams), "games": result["games"]}
+    return {"teams": len(teams), "games": result["games"], "status": result["calibrationStatus"]}

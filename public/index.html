@@ -3,101 +3,105 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0c0f">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#f2f4f3">
+<meta name="color-scheme" content="light">
 <title>Basketball Analytics</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Basquete">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header class="appbar">
-  <div class="appbar-in">
-    <div class="brandmark">
+<div class="demo" id="demoBanner" hidden>Dados fictícios de demonstração. Nada aqui vem de jogos reais.</div>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
       <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-        <circle cx="16" cy="16" r="13.5" class="lg-ball"/>
-        <path d="M16 2.5v27M2.5 16h27M7 6.5c4 3.5 4 15.5 0 19M25 6.5c-4 3.5-4 15.5 0 19" class="lg-seam"/>
-        <path d="M9 23l5-6 4 3 6-8" class="lg-trend"/>
+        <circle cx="16" cy="16" r="13" class="lg-ball"/>
+        <path d="M16 3v26M3 16h26M7.5 6.8c3.6 3.6 3.6 14.8 0 18.4M24.5 6.8c-3.6 3.6-3.6 14.8 0 18.4" class="lg-seam"/>
       </svg>
-      <div class="brandtext">
-        <span class="wordmark">Basketball <b>Analytics</b></span>
-        <h1 class="section" id="sectionName">Jogos</h1>
-      </div>
+      <span>Basketball Analytics</span>
     </div>
-    <div class="chip" id="statusChip">carregando</div>
+    <span class="pill" id="statusChip">carregando</span>
   </div>
+  <h1 class="title" id="sectionName">Jogos</h1>
 </header>
 
-<div class="demo" id="demoBanner" hidden>Dados fictícios de demonstração. Nada aqui vem de jogos reais.</div>
 <div class="notice" id="setupNotice" hidden></div>
 
-<main>
+<main id="main">
 <section id="tab-jogos" class="screen">
-  <div class="today" id="todayCard"></div>
   <div class="seg" id="chipsDay" role="tablist" aria-label="Dia"></div>
+  <div class="daystrip" id="todayCard"></div>
   <div class="jtools">
-    <input id="jSearch" type="search" placeholder="Buscar time ou liga" autocomplete="off" aria-label="Buscar time ou liga">
+    <label class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+      <input id="jSearch" type="search" placeholder="Buscar time ou liga" autocomplete="off" aria-label="Buscar time ou liga">
+    </label>
     <select id="jMinN" aria-label="Histórico mínimo dos dois times">
       <option value="0">Todos</option>
       <option value="1">Com histórico</option>
+      <option value="3">3+ jogos</option>
       <option value="5">5+ jogos</option>
       <option value="10">10+ jogos</option>
-      <option value="20">20+ jogos</option>
     </select>
   </div>
   <div id="jList"></div>
 </section>
 
 <div id="matchBar" class="matchbar" hidden>
-  <div class="mb-top">
-    <span class="mb-comp" id="mbComp"></span>
+  <div class="mb-head">
+    <div class="mb-teams">
+      <b class="a" id="mbA">Equipe A</b>
+      <span class="mb-x">x</span>
+      <b class="b" id="mbB">Equipe B</b>
+    </div>
     <button class="mb-btn" id="btnFilters" aria-expanded="false" aria-controls="controlsPanel">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
-      Filtros
+      <span>Filtros</span>
     </button>
   </div>
-  <div class="mb-vs"><b class="a" id="mbA">Equipe A</b><i>×</i><b class="b" id="mbB">Equipe B</b></div>
-  <div id="fieldPeriod"><div class="chips scroll" id="chipsPeriod"></div></div>
+  <div class="mb-comp" id="mbComp"></div>
+  <div id="fieldPeriod"><div class="chips scroll" id="chipsPeriod" role="tablist" aria-label="Período"></div></div>
 </div>
 
 <div class="backdrop" id="sheetBackdrop" hidden></div>
-<div class="panel controls" id="controlsPanel" hidden role="dialog" aria-label="Filtros do confronto">
-  <div class="sheet-head"><span class="grip" aria-hidden="true"></span><b>Filtros</b><button class="sheet-done" id="btnSheetDone">Concluir</button></div>
+<div class="sheet" id="controlsPanel" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet-head"><span class="grip" aria-hidden="true"></span><b id="sheetTitle">Filtros do confronto</b><button class="sheet-done" id="btnSheetDone">Concluir</button></div>
   <label class="field"><span>Competição</span><select id="selComp"></select></label>
   <div class="row2">
     <label class="field a"><span>Equipe A</span><select id="selA"></select></label>
     <label class="field b"><span>Equipe B</span><select id="selB"></select></label>
   </div>
+  <div class="field"><span>Últimos jogos no histórico</span><div class="chips" id="chipsN"></div></div>
   <div class="row2">
-    <div class="field"><span>Últimos jogos</span><div class="chips" id="chipsN"></div></div>
-    <label class="field"><span>Cenário</span>
+    <label class="field"><span>Cenário do histórico</span>
       <select id="selVenue">
         <option value="all">Todos os jogos</option>
         <option value="ah">A em casa, B fora</option>
         <option value="ha">A fora, B em casa</option>
       </select></label>
-  </div>
-  <div class="row2">
-    <label class="field"><span>Amostra</span>
+    <label class="field"><span>Amostra do histórico</span>
       <select id="selScope">
         <option value="comp">Só a competição</option>
         <option value="all">Todas as competições</option>
       </select></label>
-    <label class="field"><span>Peso dos jogos</span>
-      <select id="selRecency">
-        <option value="0">Peso igual</option>
-        <option value="1">Mais peso aos recentes</option>
-      </select></label>
   </div>
+  <label class="field"><span>Peso dos jogos no histórico</span>
+    <select id="selRecency">
+      <option value="0">Peso igual</option>
+      <option value="1">Mais peso aos recentes</option>
+    </select></label>
+  <p class="sheet-note">Os filtros mudam o histórico, as frequências e os gráficos. A projeção e as chances usam sempre a configuração validada no backtest (mesma liga, até 20 jogos, todos os mandos), porque as variações por mando e por recência não melhoraram o acerto.</p>
 </div>
 
 <section id="tab-vs" class="screen" hidden>
@@ -105,29 +109,37 @@
 </section>
 
 <section id="tab-live" class="screen" hidden>
-  <div class="panel" id="liveForm"></div>
+  <div id="liveGames"></div>
+  <div id="liveForm" class="group pad"></div>
   <div id="liveResult"></div>
+</section>
+
+<section id="tab-modelo" class="screen" hidden>
+  <div id="modelo"></div>
 </section>
 
 <section id="tab-cov" class="screen" hidden>
   <div id="coverage"></div>
 </section>
 
-<footer class="foot">Médias calculadas só com jogos já armazenados. A amostra real aparece sempre ao lado de cada número.</footer>
+<p class="foot">Estimativas estatísticas a partir dos jogos já armazenados. A amostra real aparece ao lado de cada número.</p>
 </main>
 
 <nav class="dock" aria-label="Navegação">
   <button class="dk on" data-tab="jogos" aria-current="page">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8 14h3M13 14h3M8 17h3"/></svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
     <span>Jogos</span></button>
   <button class="dk" data-tab="vs">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="12" r="5"/><circle cx="16" cy="12" r="5"/></svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8.5" cy="12" r="5"/><circle cx="15.5" cy="12" r="5"/></svg>
     <span>Confronto</span></button>
-  <button class="dk" data-tab="live">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-6 4 12 2.5-6h6"/></svg>
-    <span>Ao vivo</span></button>
+  <button class="dk dk-live" data-tab="live">
+    <span class="dk-live-in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.5-6 4 12 2.5-6h6"/></svg></span>
+    <span>Ao vivo</span><i class="dk-dot" id="liveDot" hidden></i></button>
+  <button class="dk" data-tab="modelo">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M5 16l4.5-5 3.5 3 6-7"/><circle cx="19" cy="7" r="1.2"/></svg>
+    <span>Modelo</span></button>
   <button class="dk" data-tab="cov">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M10 20V5M15 20v-7M20 20V8"/></svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"/></svg>
     <span>Dados</span></button>
 </nav>
 

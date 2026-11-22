@@ -4,3 +4,5 @@ chave-servico*.json
 .firebase/
 node_modules/
 __pycache__/
+dados/
+.claude/settings.local.json

@@ -175,3 +175,112 @@ export function probOver(mean, sd, line) {
   if (!sd) return null;
   return (1 - normCdf((line - mean) / sd)) * 100;
 }
+
+// =====================================================================================
+// Modelo v2 (espelho exato de collector/model.py). As funções originais acima continuam
+// disponíveis como referência. Parâmetros escolhidos no backtest walk-forward
+// (relatorio/03_backtest.md); não mude sem rodar o backtest de novo.
+// =====================================================================================
+export const V2 = { k_team: 4, k_comp: 3, k_sd: 40 };
+export const LIVE_WEIGHT_V2 = { 1: 0.1, 2: 0.2, 3: 0.3 };
+const QUARTER_KEYS = new Set(["q1", "q2", "q3", "q4"]);
+
+// "quarters", "halves" (1º tempo no Q2 e 2º tempo no Q4, com Q1 = Q3 = 0) ou "invalid" (quarto 0 x 0).
+export function shape(e) {
+  const p = e?.pts || [], o = e?.oppPts || [];
+  if (p.length < 4 || o.length < 4) return "invalid";
+  const dead = [0, 1, 2, 3].map((i) => p[i] === 0 && o[i] === 0);
+  if (!dead.some(Boolean)) return "quarters";
+  if (dead[0] && !dead[1] && dead[2] && !dead[3]) return "halves";
+  return "invalid";
+}
+
+export function usable(e, key) {
+  const s = shape(e);
+  return s === "quarters" || (s === "halves" && !QUARTER_KEYS.has(key));
+}
+
+export function isWomen(cname) {
+  const low = ` ${String(cname || "").toLowerCase()} `;
+  return ["women", " w ", " w(", "wcba", "wkbl", "wnba", "femenin", "feminin"].some((t) => low.includes(t));
+}
+
+// Estatísticas da liga no período a partir de meta/priors.v2 (gravado pelo backtest diário).
+export function leagueInfo(priors, cid, cname, key) {
+  const v = priors?.v2;
+  if (!v) return null;
+  const c = v.comps?.[cid]?.[key] || {};
+  const g = isWomen(cname) ? "w" : "m";
+  return {
+    n: c.n || 0, mean: c.mean ?? null, sd: c.sd ?? null, home: c.home ?? null,
+    gmean: v.gmean?.[g]?.[key] ?? v.gmean?.m?.[key], pooled: v.pooled?.[key] ?? DEFAULT_SD[key],
+    msd: c.msd ?? v.msd?.[key] ?? null, scale: v.sdScale?.[key] ?? 1,
+  };
+}
+
+export function leagueMean(L, kComp) {
+  const n = L.n || 0;
+  const m = n ? L.mean : 0;
+  return (n * m + kComp * L.gmean) / (n + kComp);
+}
+
+export function leagueSd(L, kSd) {
+  const n = L.n || 0;
+  const dof = Math.max(n - 1, 0);
+  const v = (L.sd || 0) ** 2;
+  return Math.sqrt((dof * v + kSd * L.pooled * L.pooled) / (dof + kSd));
+}
+
+// Projeção do total do período: média da liga + desvio de cada equipe encolhido por n/(n+K).
+export function projectV2(rowsA, rowsB, key, L, params = {}, recency = false) {
+  const p = { ...V2, ...params };
+  const lm = leagueMean(L, p.k_comp);
+  const s = leagueSd(L, p.k_sd);
+  const ta = rowsA.filter((e) => usable(e, key)).map((e) => value(e, key, "sum"));
+  const tb = rowsB.filter((e) => usable(e, key)).map((e) => value(e, key, "sum"));
+  const na = ta.length, nb = tb.length, kt = p.k_team;
+  const da = na ? wmean(ta, recency) - lm : 0;
+  const db = nb ? wmean(tb, recency) - lm : 0;
+  const sa = na / (na + kt), sb = nb / (nb + kt);
+  const meanV = lm + 0.5 * (sa * da + sb * db);
+  const nl = L.n || 0;
+  const v = s * s * (1 + 1 / (nl + p.k_comp) + 0.25 * (1 / (na + kt) + 1 / (nb + kt)));
+  // divisão entre os times: ataque de um contra a defesa do outro, com o mesmo encolhimento
+  const fa = rowsA.filter((e) => usable(e, key)), fb = rowsB.filter((e) => usable(e, key));
+  const avg = (rows, side) => (rows.length ? sum(rows.map((e) => value(e, key, side))) / rows.length : 0);
+  const half = lm / 2;
+  const offA = na ? avg(fa, "for") - half : 0, defA = na ? avg(fa, "against") - half : 0;
+  const offB = nb ? avg(fb, "for") - half : 0, defB = nb ? avg(fb, "against") - half : 0;
+  return {
+    mean: meanV, sd: Math.sqrt(v) * (L.scale || 1), league: lm, leagueSd: s, nA: na, nB: nb, shrinkA: sa, shrinkB: sb,
+    pointsA: half + 0.5 * (sa * offA + sb * defB), pointsB: half + 0.5 * (sb * offB + sa * defA),
+  };
+}
+
+// Chance de Over em fração (0 a 1), para as funções v2.
+export const pOver = (m, sd, line) => (sd ? 1 - normCdf((line - m) / sd) : null);
+
+// Projeção ao vivo v2. quarters: 4 x {a, b, sd}; played: [{a, b}] (1 a 3 quartos encerrados).
+// weight: peso do ritmo para ligas em tempos (2 períodos); padrão: LIVE_WEIGHT_V2 pelo nº de quartos.
+export function liveV2(quarters, played, marginSd = null, weight = null) {
+  const k = played.length;
+  if (k < 1 || k > quarters.length - 1) return null;
+  const obs = sum(played.map((q) => q.a + q.b));
+  const exp = sum(quarters.slice(0, k).map((q) => q.a + q.b));
+  const pace = exp ? obs / exp : 1;
+  const w = weight ?? LIVE_WEIGHT_V2[k];
+  const mult = 1 + w * (pace - 1);
+  const rest = quarters.slice(k).map((q, i) => ({
+    quarter: k + i + 1, a: q.a * mult, b: q.b * mult, total: (q.a + q.b) * mult, sd: q.sd,
+  }));
+  const pa = sum(played.map((q) => q.a)), pb = sum(played.map((q) => q.b));
+  const ra = sum(rest.map((q) => q.a)), rb = sum(rest.map((q) => q.b));
+  const sdRest = Math.sqrt(sum(rest.map((q) => q.sd * q.sd)));
+  const msd = Math.sqrt(sum(rest.map((q) => (marginSd || q.sd) ** 2)));
+  const margin = pa + ra - (pb + rb);
+  return {
+    pace, mult, weight: w, rest, restTotal: ra + rb, sdRest, playedA: pa, playedB: pb, playedTotal: obs,
+    finalA: pa + ra, finalB: pb + rb, finalTotal: obs + ra + rb, margin,
+    winA: msd ? normCdf(margin / msd) : null, nextQuarter: rest[0],
+  };
+}

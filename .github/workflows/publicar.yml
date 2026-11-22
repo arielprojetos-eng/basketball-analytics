@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: "20"
       - name: Testes dos cálculos
-        run: node --test tests/stats.test.mjs
+        run: npm test
       - name: Credencial
         env:
           SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

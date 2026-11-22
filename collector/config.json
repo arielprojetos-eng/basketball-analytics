@@ -24,12 +24,32 @@
     "VTB"
   ],
   "apisports": {
+    "plan": "free",
     "daily_call_limit": 90,
     "per_run_call_limit": 25,
     "backfill_floor_days": 400,
     "finished_status": [
       "FT",
       "AOT"
-    ]
+    ],
+    "plans": {
+      "free": {
+        "_nota": "100 chamadas/dia. O agendador dispara a cada 10 min, mas o ao vivo só chama a API a cada 30 min (1 chamada; 2 de madrugada UTC), cerca de 60/dia; sobram 20 para as 4 coletas completas.",
+        "daily_call_limit": 90,
+        "per_run_call_limit": 25,
+        "live_min_interval_minutes": 30,
+        "live_calls_per_run": 2,
+        "live_reserve": 20
+      },
+      "pro": {
+        "_nota": "Plano pago. Confira a cota diária do seu plano no painel da API-Sports e ajuste daily_call_limit. O limite real passa a ser a cota grátis de 20 mil gravações/dia do Firestore: por isso o retroativo anda no máximo backfill_days_per_run dias por coleta completa.",
+        "daily_call_limit": 7000,
+        "per_run_call_limit": 200,
+        "live_min_interval_minutes": 10,
+        "live_calls_per_run": 2,
+        "live_reserve": 100,
+        "backfill_days_per_run": 5
+      }
+    }
   }
 }

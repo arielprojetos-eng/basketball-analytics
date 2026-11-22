@@ -2,23 +2,35 @@ name: Coletor de basquete
 
 on:
   schedule:
-    # 4 execuções por dia (UTC). Cada API gratuita tem 100 chamadas/dia, controladas separadamente.
+    # Coleta completa + backtest: 4 vezes por dia (UTC).
     - cron: "17 2,8,14,20 * * *"
+    # Ao vivo: placares parciais (com quartos) na agenda, para o painel calcular as chances sozinho.
+    # O agendador dispara a cada 10 min; o coletor só chama a API quando o intervalo mínimo do plano
+    # passou (collector/config.json, apisports.plans): gratuito 30 min, pago 10 min. As execuções
+    # intermediárias do plano gratuito terminam sem gastar cota.
+    # O repositório é público, então os minutos do Actions são ilimitados. Se ele virar PRIVADO, volte
+    # para "*/30 * * * *" (nas três ocorrências deste arquivo): a cada 10 min seriam ~4.300 min/mês,
+    # acima dos 2.000 grátis, e o GitHub pararia também a coleta completa.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
+      modo:
+        description: "completa ou aovivo"
+        required: false
+        default: "completa"
       max_calls:
-        description: "Máximo de chamadas à API nesta execução"
+        description: "Máximo de chamadas à API nesta execução (coleta completa)"
         required: false
         default: "30"
 
-concurrency:
-  group: coletor
-  cancel-in-progress: false
-
 jobs:
   coletar:
+    if: github.event.schedule != '*/10 * * * *' && github.event.inputs.modo != 'aovivo'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    concurrency:
+      group: coletor
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,3 +53,26 @@ jobs:
           else
             python -m collector.main run
           fi
+
+  aovivo:
+    if: github.event.schedule == '*/10 * * * *' || github.event.inputs.modo == 'aovivo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: coletor-aovivo
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+      - run: pip install -r collector/requirements.txt
+      - name: Testes
+        run: python -m unittest collector.tests.test_collector collector.tests.test_apisports collector.tests.test_model
+      - name: Placar ao vivo
+        env:
+          APISPORTS_KEY: ${{ secrets.APISPORTS_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python -m collector.main run --only live

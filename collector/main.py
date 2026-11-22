@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .api import (ApiError, BudgetExhausted, Client, QuotaExceeded,
                   UpgradeRequired)
+from .model import shape
 from .store import BufferedStore, FirestoreStore, now_iso
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
@@ -94,6 +95,9 @@ def scores_match(periods, home_total, away_total):
     """Os quartos (mais prorrogações) precisam somar o placar final, e cada período ter valor plausível."""
     home, away = periods
     if any(not 0 <= x <= 80 for x in home + away):
+        return False
+    # Quarto 0 x 0 fora do padrão de tempos (Q1 = Q3 = 0) é jogo zerado ou truncado, não placar real.
+    if shape({"pts": home[:4], "oppPts": away[:4]}) == "invalid":
         return False
     if home_total is not None and sum(home) != int(home_total):
         return False
@@ -291,15 +295,53 @@ def daily_budget(store, cfg, quota_name, limit_key, run_key, override=None):
     return min(override or cfg.get(run_key, 30), left), used
 
 
+def live_budget(store, acfg, override=None):
+    """Chamadas liberadas para a varredura ao vivo, preservando a reserva das coletas completas."""
+    today = today_utc().isoformat()
+    quota = store.get_meta("quota_apisports")
+    used = quota.get("used", 0) if quota.get("date") == today else 0
+    left = acfg.get("daily_call_limit", 90) - used - acfg.get("live_reserve", 20)
+    return max(0, min(override or acfg.get("live_calls_per_run", 2), left)), used
+
+
+def run_live_cli(cfg, max_calls=None, store=None, client_factory=None, now_ts=None):
+    """Varredura ao vivo (agendada a cada poucos minutos). Só API-Sports, só agenda."""
+    import time
+    from . import apisports
+    key = os.environ.get("APISPORTS_KEY")
+    if not key and client_factory is None:
+        print("Defina APISPORTS_KEY.", file=sys.stderr)
+        return 2
+    cfg = apisports.effective(cfg)
+    store = store or BufferedStore(FirestoreStore())
+    now_ts = time.time() if now_ts is None else now_ts
+    if not apisports.live_due(store, cfg, now_ts):
+        print(f"ao vivo: intervalo mínimo do plano {cfg['apisports']['plan']} "
+              f"({cfg['apisports'].get('live_min_interval_minutes', 30)} min) ainda não passou.")
+        return 0
+    budget, used = live_budget(store, cfg["apisports"], max_calls)
+    if budget < 1:
+        print(f"ao vivo: sem cota livre (usadas {used}, reserva das coletas completas preservada).")
+        return 0
+    client = (client_factory or (lambda b: apisports.Client(key, budget=b)))(budget)
+    out = apisports.run_live(client, store, cfg, now_ts=now_ts)
+    print("ao vivo:", json.dumps(out, ensure_ascii=False))
+    if hasattr(store, "flush"):
+        store.flush()
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--max-calls", type=int, default=None)
-    r.add_argument("--only", choices=["basketballapi", "apisports", "backtest"], default=None)
+    r.add_argument("--only", choices=["basketballapi", "apisports", "backtest", "live"], default=None)
     args = ap.parse_args(argv)
 
     cfg = load_config()
+    if args.only == "live":
+        return run_live_cli(cfg, args.max_calls)
     key_bba = os.environ.get("BASKETBALL_API_KEY")
     key_as = os.environ.get("APISPORTS_KEY")
     if not key_bba and not key_as:
@@ -314,12 +356,12 @@ def main(argv=None):
 
     if key_as and args.only in (None, "apisports"):
         from . import apisports
-        acfg = cfg.get("apisports", {})
+        acfg = apisports.effective(cfg)["apisports"]
         budget, used = daily_budget(store, acfg, "quota_apisports", "daily_call_limit", "per_run_call_limit", args.max_calls)
         if budget >= 2:
             try:
                 c = apisports.Client(key_as, budget=budget)
-                out = apisports.run(c, store, cfg)
+                out = apisports.run(c, store, apisports.effective(cfg))
                 print("api-sports:", json.dumps({"calls": c.calls, **out}, ensure_ascii=False))
             except Exception as e:  # uma fonte com problema não derruba a outra
                 failures += 1

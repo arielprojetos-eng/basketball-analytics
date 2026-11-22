@@ -20,12 +20,23 @@ Painel de pontuação por quarto (médias, Over, projeções e modo Ao vivo), co
 
 ## Modo Ao vivo
 
-Informe os placares dos quartos encerrados. Para cada quarto restante, a base é a projeção cruzada (ataque de um time com a defesa do outro, no mesmo quarto). O ritmo do jogo (pontos observados divididos pelos esperados) ajusta essa base com peso de 20% após o 1º quarto, 30% após o 2º e 40% após o 3º. As chances de Over usam curva normal com o desvio padrão histórico de cada quarto. Esses pesos são uma escolha conservadora, ainda não calibrada com os dados coletados; dá para recalibrar quando houver algumas centenas de jogos.
+- A varredura ao vivo (`python -m collector.main run --only live`) é disparada no GitHub Actions a cada 10 min e grava na agenda os placares com os quartos parciais. Só chama a API quando passou o intervalo mínimo do plano: 30 min no gratuito (as execuções do meio terminam sem gastar cota) e 10 min no pago. Usa 1 chamada (2 de madrugada, em UTC) e não grava nas equipes.
+- No painel, ao abrir um jogo em andamento, os quartos já encerrados são preenchidos sozinhos e as chances aparecem na hora: restante do jogo (ex.: 2º tempo após o intervalo), jogo inteiro, próximo quarto e chance de vitória. Dá para editar à mão.
+- O ritmo do jogo pesa 10%, 20% e 30% após o 1º, 2º e 3º quartos (escolhido no backtest). Ligas em tempos (NCAA masculina) usam o 1º tempo.
+- Com o app aberto, os placares são conferidos a cada 3 minutos.
+
+## Plano pago da API-Sports
+
+1. Assine o plano no site da API-Sports. A chave costuma ser a mesma (Secret `APISPORTS_KEY`); se mudar, atualize o Secret.
+2. Em `collector/config.json`, troque `"plan": "free"` por `"plan": "pro"` e confira `daily_call_limit` em `apisports.plans.pro` com a cota real do seu plano.
+3. Pronto: o agendador já dispara a cada 10 min, e no plano pago cada disparo atualiza os placares.
+   O repositório é público, então os minutos do Actions não têm limite. Se ele virar privado, volte `*/10 * * * *` para `*/30 * * * *` nas três ocorrências de `.github/workflows/coletor.yml` (a cada 10 min seriam cerca de 4.300 min/mês, acima dos 2.000 grátis).
+4. No plano pago o histórico retroativo volta a andar, limitado a `backfill_days_per_run` dias por coleta completa para respeitar as 20 mil gravações/dia do Firestore.
 
 ## Testes
 
     python -m unittest collector.tests.test_collector collector.tests.test_apisports collector.tests.test_model
-    node --test tests/stats.test.mjs
+    npm test
 
 ## Pré-visualização sem Firebase
 
@@ -33,10 +44,12 @@ Abra o painel com `?demo` no final do endereço: usa dados fictícios, marcados 
 
 ## Modelo, validação e backtest
 
-- **Projeção cruzada**: (ataque de A + defesa de B)/2 + (ataque de B + defesa de A)/2, por período, nos últimos N jogos da mesma liga. Opcionalmente com peso maior aos jogos recentes (meia-vida de 8 jogos).
-- **Chance estimada**: curva normal centrada na projeção. A dispersão é a das duas equipes, puxada para o padrão da liga (`meta/priors`) quando há poucos jogos. É diferente da frequência histórica, que continua visível ao lado.
-- **Validação**: um jogo só entra no histórico se a soma dos quartos (mais prorrogações) bater com o placar final e cada período estiver entre 0 e 80 pontos.
-- **Backtest** (`collector/backtest.py`): roda uma vez por dia, na primeira coleta do dia. Para cada jogo armazenado, refaz a projeção usando só informação anterior ao início dele: as médias vêm dos jogos anteriores das duas equipes (mínimo de 3 de cada) e a dispersão de referência da liga é acumulada só com jogos que começaram antes (jogos no mesmo horário não entram um no outro). Mede erro médio (simples e com recência), viés, Brier (modelo e frequência), calibração por faixa e o erro de calibração (ECE), com veredito: amostra insuficiente (menos de 500 casos), calibrado (até 3 p.p.), aceitável (até 6 p.p.) ou descalibrado. Enquanto não houver veredito favorável, o painel avisa que as chances não foram validadas. Um teste automático garante que acrescentar jogos futuros não altera a avaliação de nenhum jogo passado.
+Detalhes, números e evidências em `relatorio/` (RELATORIO_FINAL.md, 01 a 03).
+
+- **Modelo v2**: parte da média da liga no período e ajusta pelo histórico das equipes na proporção da amostra (com 4 jogos a equipe pesa 50%; com 20, 83%). A dispersão vem da liga, corrigida pelo que o backtest observou. Validado fora da amostra: erra 0,72 ponto a menos por quarto que o modelo original e tem chances calibradas (ECE de 1,9 p.p.).
+- **Qualidade dos dados**: jogos da NCAA masculina chegam em tempos (Q1 = Q3 = 0) e entram só em tempos e jogo; jogos com quarto 0 x 0 são recusados; o mesmo jogo gravado pelas duas APIs conta uma vez só.
+- **Backtest diário** (`collector/backtest.py`): avalia o v2, o modelo original e a média da liga, jogo a jogo, só com jogos anteriores. O veredito conta jogos distintos (mínimo 300), não casos correlacionados. Resultado na aba Modelo.
+- **Backtest completo local**: `python scripts/backtest_completo.py` (referências, variantes testadas, intervalos de confiança, pesos ao vivo).
 - **Pace**: não implementado, porque exige posses de bola (box score), indisponíveis nos planos gratuitos.
 - **Prorrogação**: os quartos e o tempo regulamentar nunca incluem prorrogação; só o período "Jogo com prorrogação" inclui.
 

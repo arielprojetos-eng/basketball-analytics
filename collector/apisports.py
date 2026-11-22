@@ -165,12 +165,58 @@ def agenda_entry(g, cfg):
     name = comp_name(g)
     if not competition_allowed(name, cfg):
         return None
-    return {
+    sh, sa = sc.get("home") or {}, sc.get("away") or {}
+    entry = {
         "id": f"as_gm_{g['id']}", "t": int(ts), "st": (g.get("status") or {}).get("short") or "",
         "lg": f"as_cp_{league['id']}", "ln": name, "tier": competition_tier(name, cfg),
         "h": f"as_tm_{th['id']}", "hn": th.get("name"), "a": f"as_tm_{ta['id']}", "an": ta.get("name"),
-        "hs": (sc.get("home") or {}).get("total"), "as": (sc.get("away") or {}).get("total"),
+        "hs": sh.get("total"), "as": sa.get("total"),
     }
+    # Quartos (parciais, durante o jogo): permitem ao painel calcular as chances ao vivo sozinho.
+    hq, aq = quarter_list(sh), quarter_list(sa)
+    if any(x is not None for x in hq + aq):
+        entry["hq"], entry["aq"] = hq, aq
+    return entry
+
+
+def quarter_list(side):
+    out = []
+    for i in range(1, 5):
+        v = side.get(f"quarter_{i}")
+        try:
+            out.append(int(v) if v is not None else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out
+
+
+def effective(cfg):
+    """Configuração com os limites do plano escolhido em apisports.plan ("free" ou "pro") aplicados.
+
+    Trocar de plano é só mudar apisports.plan em collector/config.json (a chave continua no Secret).
+    """
+    a = dict(cfg.get("apisports", {}))
+    plan = a.get("plan", "free")
+    a.update((a.get("plans") or {}).get(plan, {}))
+    a["plan"] = plan
+    return {**cfg, "apisports": a}
+
+
+def agenda_window(today):
+    """Janela do documento meta/agenda: início de ontem até o fim de amanhã em Brasília, com folga."""
+    from datetime import datetime, time, timezone as tz
+    start = int(datetime.combine(today - timedelta(days=1), time(0), tzinfo=tz.utc).timestamp()) - 6 * 3600
+    end = int(datetime.combine(today + timedelta(days=2), time(12), tzinfo=tz.utc).timestamp())
+    return start, end
+
+
+def merge_agenda(old_games, new_games, today):
+    """Atualiza a agenda com os jogos novos (mesmo id substitui) e descarta o que saiu da janela."""
+    start, end = agenda_window(today)
+    by_id = {x["id"]: x for x in old_games or []}
+    for x in new_games:
+        by_id[x["id"]] = x
+    return sorted((x for x in by_id.values() if start <= x["t"] <= end), key=lambda x: (x["t"], x["id"]))
 
 
 def backfill(client, store, cfg, reserve=0, today=None):
@@ -179,11 +225,15 @@ def backfill(client, store, cfg, reserve=0, today=None):
     state = store.get_meta("backfill_apisports")
     if state.get("blocked"):
         return 0, "blocked"
-    floor = today - timedelta(days=cfg.get("apisports", {}).get("backfill_floor_days", 400))
+    acfg = cfg.get("apisports", {})
+    floor = today - timedelta(days=acfg.get("backfill_floor_days", 400))
     nxt = date.fromisoformat(state["nextDate"]) if state.get("nextDate") else today - timedelta(days=2)
-    new = 0
+    # No plano pago sobra cota de chamadas; o limite passa a ser a cota de gravações do Firestore.
+    max_days = acfg.get("backfill_days_per_run") or 10 ** 6
+    new = days = 0
     try:
-        while client.remaining() > reserve and nxt >= floor:
+        while client.remaining() > reserve and nxt >= floor and days < max_days:
+            days += 1
             new += ingest_date(client, store, cfg, nxt)
             nxt -= timedelta(days=1)
             store.set_meta("backfill_apisports", {"nextDate": nxt.isoformat(), "at": now_iso()})
@@ -220,16 +270,8 @@ def run(client, store, cfg, today=None):
         quota["used"] = cfg.get("apisports", {}).get("daily_call_limit", 90)
     finally:
         if agenda:
-            # Janela fixa (início de ontem até o fim de amanhã em Brasília, com folga) para o documento não crescer.
-            from datetime import datetime, time, timezone as tz
-            start = int(datetime.combine(today - timedelta(days=1), time(0), tzinfo=tz.utc).timestamp()) - 6 * 3600
-            end = int(datetime.combine(today + timedelta(days=2), time(12), tzinfo=tz.utc).timestamp())
-            seen, games = set(), []
-            for x in sorted(agenda, key=lambda x: x["t"]):
-                if not start <= x["t"] <= end:
-                    continue
-                if x["id"] not in seen:
-                    seen.add(x["id"]); games.append(x)
+            # Janela fixa para o documento não crescer; a coleta completa reconstrói a agenda inteira.
+            games = merge_agenda([], agenda, today)
             store.set_meta("agenda", {"updatedAt": now_iso(), "games": games})
             summary["agenda"] = len(games)
         quota["used"] = quota.get("used", 0) + client.calls
@@ -237,3 +279,58 @@ def run(client, store, cfg, today=None):
         store.set_meta("status_apisports", {"lastRun": now_iso(), "callsThisRun": client.calls,
                                             "usedToday": quota["used"], "lastSummary": summary})
     return summary
+
+
+LIVE_STATUS = {"Q1", "Q2", "Q3", "Q4", "OT", "BT", "HT"}
+
+
+def live_due(store, cfg, now_ts):
+    """A varredura ao vivo respeita o intervalo mínimo do plano (o agendador pode chamar mais vezes)."""
+    last = store.get_meta("status_live").get("lastTs") or 0
+    gap = cfg.get("apisports", {}).get("live_min_interval_minutes", 30) * 60
+    # folga para o atraso normal do agendador do GitHub (minutos): 5 min, ou metade do intervalo
+    return now_ts - last >= gap - min(300, gap / 2)
+
+
+def run_live(client, store, cfg, today=None, now_ts=None):
+    """Varredura curta: só atualiza os placares (com quartos) na agenda.
+
+    Não grava nas equipes: jogos encerrados entram no histórico pela coleta completa, o que evita
+    duas execuções gravando o mesmo documento de equipe ao mesmo tempo. Usa 1 chamada
+    (2 de madrugada em UTC, quando ainda há jogos que começaram na data UTC anterior).
+    """
+    import time as _t
+    today = today or today_utc()
+    now_ts = int(now_ts if now_ts is not None else _t.time())
+    quota = store.get_meta("quota_apisports")
+    if quota.get("date") != today.isoformat():
+        quota = {"date": today.isoformat(), "used": 0}
+    dates = [today]
+    if (now_ts % 86400) < 6 * 3600:
+        dates.insert(0, today - timedelta(days=1))
+    fresh, note = [], ""
+    try:
+        for d in dates:
+            try:
+                rows = client.get("/games", {"date": d.isoformat(), "timezone": "UTC"})
+            except PlanRestricted as e:
+                note = f"plano bloqueou {d.isoformat()}: {e}"[:300]
+                continue
+            fresh.extend(x for x in (agenda_entry(g, cfg) for g in rows) if x)
+    except BudgetExhausted:
+        note = note or "orçamento da execução esgotado"
+    except QuotaExceeded as e:
+        note = f"cota diária esgotada: {e}"[:300]
+        quota["used"] = cfg.get("apisports", {}).get("daily_call_limit", 90)
+    finally:
+        live = sum(1 for x in fresh if x["st"] in LIVE_STATUS)
+        if fresh:
+            old = store.get_meta("agenda").get("games") or []
+            store.set_meta("agenda", {"updatedAt": now_iso(), "games": merge_agenda(old, fresh, today),
+                                      "liveAt": now_iso()})
+        quota["used"] = quota.get("used", 0) + client.calls
+        store.set_meta("quota_apisports", quota)
+        store.set_meta("status_live", {"lastRun": now_iso(), "lastTs": now_ts, "calls": client.calls,
+                                       "games": len(fresh), "live": live, "note": note,
+                                       "plan": cfg.get("apisports", {}).get("plan", "free")})
+    return {"games": len(fresh), "live": live, "calls": client.calls, "note": note}

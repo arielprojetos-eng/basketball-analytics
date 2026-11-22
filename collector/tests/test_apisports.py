@@ -127,6 +127,107 @@ class ApiSportsTests(unittest.TestCase):
         self.assertEqual(len(s.calls), 3)
 
 
+def live_game(gid, d, st, q, oq):
+    x = g(gid, d=d, status=st, q=(0, 0, 0, 0), oq=(0, 0, 0, 0))
+    for side, vals in (("home", q), ("away", oq)):
+        for i in range(4):
+            x["scores"][side][f"quarter_{i+1}"] = vals[i] if i < len(vals) else None
+        x["scores"][side]["total"] = sum(vals)
+    return x
+
+
+NOON = 1794744000  # 2026-11-15 12:00 UTC
+
+
+class AoVivoTests(unittest.TestCase):
+    def test_agenda_traz_quartos_parciais(self):
+        e = a.agenda_entry(live_game(5, "2026-11-15", "HT", (27, 23), (23, 17)), CFG)
+        self.assertEqual(e["hq"], [27, 23, None, None])
+        self.assertEqual(e["aq"], [23, 17, None, None])
+        self.assertEqual((e["hs"], e["as"]), (50, 40))
+        sched = {**g(6, status="NS"), "scores": {"home": {}, "away": {}}}
+        self.assertNotIn("hq", a.agenda_entry(sched, CFG))  # sem placar, sem quartos
+
+    def test_varredura_ao_vivo_atualiza_so_a_agenda(self):
+        st = MemoryStore()
+        st.set_meta("agenda", {"games": [
+            {"id": "as_gm_5", "t": NOON - 3600, "st": "Q1", "hs": 20, "as": 18},
+            {"id": "as_gm_9", "t": NOON + 86400, "st": "NS"},            # amanhã: preservado
+            {"id": "as_gm_old", "t": NOON - 10 * 86400, "st": "FT"},     # fora da janela: sai
+        ]})
+        s = S({"2026-11-15": [live_game(5, "2026-11-15", "HT", (27, 23), (23, 17))]})
+        out = a.run_live(cl(s), st, CFG, today=date(2026, 11, 15), now_ts=NOON)
+        self.assertEqual(s.calls, ["2026-11-15"])           # 1 chamada ao meio-dia
+        self.assertEqual(out["live"], 1)
+        ids = [x["id"] for x in st.meta["agenda"]["games"]]
+        self.assertEqual(sorted(ids), ["as_gm_5", "as_gm_9"])
+        g5 = next(x for x in st.meta["agenda"]["games"] if x["id"] == "as_gm_5")
+        self.assertEqual((g5["st"], g5["hs"], g5["hq"][:2]), ("HT", 50, [27, 23]))
+        self.assertEqual(st.teams, {})                       # nada gravado nas equipes
+        self.assertEqual(st.meta["quota_apisports"]["used"], 1)
+        self.assertEqual(st.meta["status_live"]["lastTs"], NOON)
+
+    def test_madrugada_busca_tambem_a_data_anterior(self):
+        s = S({})
+        a.run_live(cl(s), MemoryStore(), CFG, today=date(2026, 11, 15), now_ts=NOON - 9 * 3600)  # 03:00 UTC
+        self.assertEqual(s.calls, ["2026-11-14", "2026-11-15"])
+
+    def test_intervalo_minimo_do_plano(self):
+        st = MemoryStore()
+        cfg = a.effective({**CFG, "apisports": {**CFG["apisports"], "plan": "free",
+                                                "plans": {"free": {"live_min_interval_minutes": 30}}}})
+        self.assertTrue(a.live_due(st, cfg, NOON))
+        st.set_meta("status_live", {"lastTs": NOON})
+        self.assertFalse(a.live_due(st, cfg, NOON + 10 * 60))
+        self.assertFalse(a.live_due(st, cfg, NOON + 24 * 60))
+        self.assertTrue(a.live_due(st, cfg, NOON + 26 * 60))   # folga para atraso do agendador
+
+    def test_agendador_a_cada_10_min_respeita_o_plano(self):
+        import json
+        import random
+        from pathlib import Path
+        raw = json.loads((Path(__file__).resolve().parents[1] / "config.json").read_text(encoding="utf-8"))
+        rnd = random.Random(3)
+        for plan, lo, hi in (("free", 40, 48), ("pro", 140, 144)):
+            cfg = a.effective({**raw, "apisports": {**raw["apisports"], "plan": plan}})
+            st, runs = MemoryStore(), 0
+            for i in range(144):   # um dia, disparo a cada 10 min com até 4 min de atraso
+                now = NOON + i * 600 + rnd.randint(0, 240)
+                if a.live_due(st, cfg, now):
+                    runs += 1
+                    st.set_meta("status_live", {"lastTs": now})
+            self.assertTrue(lo <= runs <= hi, f"{plan}: {runs} varreduras")
+
+    def test_troca_de_plano_pela_configuracao(self):
+        import json
+        from pathlib import Path
+        raw = json.loads((Path(__file__).resolve().parents[1] / "config.json").read_text(encoding="utf-8"))
+        free = a.effective(raw)["apisports"]
+        self.assertEqual(free["plan"], "free")
+        self.assertLessEqual(free["daily_call_limit"], 100)
+        # free: 48 varreduras/dia (até 2 chamadas) cabem com a reserva das coletas completas
+        self.assertLessEqual(48 * 1 + 12 + free["live_reserve"], free["daily_call_limit"] + 10)
+        pro = a.effective({**raw, "apisports": {**raw["apisports"], "plan": "pro"}})["apisports"]
+        self.assertGreater(pro["daily_call_limit"], 1000)
+        self.assertLess(pro["live_min_interval_minutes"], free["live_min_interval_minutes"])
+        self.assertTrue(pro["backfill_days_per_run"])
+
+    def test_retroativo_limitado_por_execucao(self):
+        s = S({})
+        cfg = {**CFG, "apisports": {**CFG["apisports"], "backfill_floor_days": 300, "backfill_days_per_run": 3}}
+        a.run(cl(s, budget=50), MemoryStore(), cfg, today=date(2026, 11, 15))
+        self.assertEqual(len(s.calls), 4 + 3)
+
+    def test_cli_preserva_reserva_das_coletas(self):
+        from collector import main as m
+        st = MemoryStore()
+        st.set_meta("quota_apisports", {"date": m.today_utc().isoformat(), "used": 75})
+        calls = []
+        rc = m.run_live_cli(m.load_config(), store=st, client_factory=lambda b: calls.append(b), now_ts=NOON)
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [])   # 90 - 75 - reserva 20 < 1: não chama a API
+
+
 class BufferTests(unittest.TestCase):
     def test_grava_cada_equipe_uma_vez(self):
         from collector.store import BufferedStore

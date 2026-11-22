@@ -70,7 +70,8 @@ export async function getMetas(names) {
   for (const row of rows) {
     if (row.found) out[row.found.name.split("/").pop()] = fromFields(row.found.fields);
   }
-  write(META_CACHE, { t: Date.now(), data: out });
+  // mescla com o que já estava salvo: uma atualização parcial (ex.: só a agenda) não apaga o resto
+  write(META_CACHE, { t: Date.now(), data: { ...(read(META_CACHE)?.data || {}), ...out } });
   return out;
 }
 
