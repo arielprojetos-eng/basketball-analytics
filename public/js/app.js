@@ -624,7 +624,7 @@ function renderModel(bt) {
     </div>
     <section class="group pad"><h3 style="margin:0 0 4px;font-size:15px">Como o modelo funciona</h3>
       <p class="hint">Parte da média da liga no período (encolhida para a média global do mesmo gênero quando a liga tem poucos jogos) e soma o desvio de cada equipe na proporção n/(n + ${bt.params?.k_team ?? 4}): com 4 jogos a equipe pesa 50%. A dispersão vem da liga, corrigida pelo que o backtest observou. Ao vivo, o ritmo do jogo pesa ${Math.round((lw["1"] ?? 0.1) * 100)}%, ${Math.round((lw["2"] ?? 0.2) * 100)}% e ${Math.round((lw["3"] ?? 0.3) * 100)}% após o 1º, 2º e 3º quartos.</p>
-      ${ref ? `<p class="hint">Referência, modelo original no mesmo dia: ${ref.games} jogos avaliáveis, calibração ${esc(ref.calibrationStatus)}${ref.ece != null ? ` (${(ref.ece * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} p.p.)` : ""}.</p>` : ""}</section>`;
+      ${ref && !ref.error ? `<p class="hint">Referência, modelo original no mesmo dia: ${ref.games} jogos avaliáveis, calibração ${esc(ref.calibrationStatus)}${ref.ece != null ? ` (${(ref.ece * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} p.p.)` : ""}.</p>` : ""}</section>`;
 }
 
 function legacyModel(bt, cls, title, sub, ece) {

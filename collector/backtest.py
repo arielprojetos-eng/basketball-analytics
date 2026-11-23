@@ -145,6 +145,11 @@ def run_backtest(teams, trace=None):
                     line = M.central_line(ps) + off
                     hit = 1.0 if actual > line else 0.0
                     pm = M.prob_over(ps, s, line)
+                    if pm is None:
+                        # dispersão zero (ex.: NCAA masculina em tempos, com Q1 = Q3 = 0 sempre):
+                        # o modelo original não tem probabilidade; a linha não entra na avaliação.
+                        d["degenerate"] += 1
+                        continue
                     fa, fb = M.freq_over(A["totals"], line), M.freq_over(B["totals"], line)
                     pf = (fa + fb) / 2
                     d["lines"] += 1
@@ -174,8 +179,8 @@ def run_backtest(teams, trace=None):
         n, L = d["n"], d["lines"]
         periods[k] = {"n": int(n)} if not n else {
             "n": int(n), "maeSimple": r(d["absSimple"] / n), "maeRecency": r(d["absRecency"] / n),
-            "bias": r(d["errSimple"] / n), "brierModel": r(d["brierModel"] / L, 4),
-            "brierFreq": r(d["brierFreq"] / L, 4)}
+            "bias": r(d["errSimple"] / n), "brierModel": r(d["brierModel"] / L, 4) if L else None,
+            "brierFreq": r(d["brierFreq"] / L, 4) if L else None, "skippedLines": int(d["degenerate"])}
     calibration = [{"lo": lo, "hi": min(hi, 1), "n": int(c["n"]),
                     "p": r(c["p"] / c["n"], 3) if c["n"] else None,
                     "freq": r(c["hit"] / c["n"], 3) if c["n"] else None}
@@ -365,9 +370,13 @@ def run(store, today_iso):
     priors["updatedAt"] = now_iso()
     result, league = run_backtest_v2(teams)
     priors["v2"] = {**league.export(), "sdScale": result["sdScale"]}
-    ref = run_backtest(teams)
-    result["reference"] = {k: ref[k] for k in ("games", "periods", "ece", "calibrationStatus", "calibrationCases")}
     result["date"] = today_iso
+    # O modelo original roda só como referência: uma falha nele não pode impedir a gravação do v2.
+    try:
+        ref = run_backtest(teams)
+        result["reference"] = {k: ref[k] for k in ("games", "periods", "ece", "calibrationStatus", "calibrationCases")}
+    except Exception as e:  # noqa: BLE001
+        result["reference"] = {"error": f"{type(e).__name__}: {e}"[:300]}
     store.set_meta("priors", priors)
     store.set_meta("backtest", result)
     return {"teams": len(teams), "games": result["games"], "status": result["calibrationStatus"]}

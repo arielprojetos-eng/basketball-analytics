@@ -267,6 +267,37 @@ class BacktestV2Tests(unittest.TestCase):
         self.assertGreater(res["calibrationCases"], res["calibrationGames"])
         self.assertEqual(res["calibrationStatus"], "amostra insuficiente")  # 27 jogos < 300
 
+    def test_liga_em_tempos_nao_derruba_a_rotina(self):
+        """Regressão (23/11/2026): jogos em tempos (Q1 = Q3 = 0) zeravam a dispersão do modelo original,
+        que devolvia chance vazia e derrubava o backtest diário inteiro, sem gravar o v2."""
+        teams = _league_games(10)
+        for t in teams.values():
+            for e in t["games"]:
+                e["pts"] = [0, e["pts"][0] + e["pts"][1], 0, e["pts"][2] + e["pts"][3]]
+                e["oppPts"] = [0, e["oppPts"][0] + e["oppPts"][1], 0, e["oppPts"][2] + e["oppPts"][3]]
+        st = MemoryStore()
+        for tid, d in teams.items():
+            st.put_team(tid, d)
+        bt.run(st, "2026-11-23")
+        self.assertIn("v2", st.meta["priors"])
+        ref = st.meta["backtest"]["reference"]
+        self.assertNotIn("error", ref)
+        self.assertGreater(ref["periods"]["q1"]["skippedLines"], 0)   # linhas sem chance ficam de fora
+
+    def test_falha_na_referencia_nao_impede_o_v2(self):
+        st = MemoryStore()
+        for tid, d in _league_games(8).items():
+            st.put_team(tid, d)
+        original = bt.run_backtest
+        bt.run_backtest = lambda teams: 1 / 0
+        try:
+            bt.run(st, "2026-11-23")
+        finally:
+            bt.run_backtest = original
+        self.assertEqual(st.meta["backtest"]["model"], "v2")
+        self.assertIn("v2", st.meta["priors"])
+        self.assertIn("ZeroDivisionError", st.meta["backtest"]["reference"]["error"])
+
     def test_run_grava_v2_e_referencia(self):
         st = MemoryStore()
         for tid, d in _league_games(8).items():
