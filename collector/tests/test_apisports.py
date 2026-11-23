@@ -354,6 +354,61 @@ class OddsTests(unittest.TestCase):
         self.assertEqual(a.agenda_entry(g(5), CFG)["ss"], "2025-2026")
 
 
+class RedeInstavelTests(unittest.TestCase):
+    """Regressão (23/11/2026): 'Remote end closed connection without response' na Basketball API
+    marcava a coleta inteira como falha. Agora: nova tentativa e, se persistir, só um aviso."""
+
+    @staticmethod
+    def flaky(fail_times, ok_body=None, status=None):
+        import requests
+
+        class Sess:
+            calls = 0
+
+            def get(self, url, params=None, headers=None, timeout=None):
+                Sess.calls += 1
+                if Sess.calls <= fail_times:
+                    if status:
+                        return R({}, status=status)
+                    raise requests.ConnectionError(("Connection aborted.", "RemoteDisconnected"))
+                return R(ok_body if ok_body is not None else {"errors": [], "response": []})
+        return Sess()
+
+    def test_api_sports_tenta_de_novo_apos_queda(self):
+        waits = []
+        s = self.flaky(2)
+        c = a.Client("k", budget=5, session=s, min_interval=0, sleep=waits.append)
+        self.assertEqual(c.get("/games", {"date": "2026-11-23"}), [])
+        self.assertEqual(type(s).calls, 3)
+        self.assertEqual(len(waits), 2)
+
+    def test_api_sports_erro_500_tambem_tenta_de_novo(self):
+        s = self.flaky(1, status=503)
+        c = a.Client("k", budget=5, session=s, min_interval=0, sleep=lambda x: None)
+        self.assertEqual(c.get("/games", {"date": "2026-11-23"}), [])
+
+    def test_queda_persistente_vira_aviso_e_nao_falha(self):
+        from collector.api import TransientError
+        c = a.Client("k", budget=10, session=self.flaky(99), min_interval=0, sleep=lambda x: None)
+        with self.assertRaises(TransientError):
+            c.get("/games", {"date": "2026-11-23"})
+        st = MemoryStore()
+        out = a.run_live(a.Client("k", budget=10, session=self.flaky(99), min_interval=0, sleep=lambda x: None),
+                         st, CFG, today=date(2026, 11, 15), now_ts=NOON)
+        self.assertIn("instabilidade", out["note"])
+        out = a.run(a.Client("k", budget=10, session=self.flaky(99), min_interval=0, sleep=lambda x: None),
+                    MemoryStore(), CFG, today=date(2026, 11, 15))
+        self.assertIn("instabilidade", out["note"])
+
+    def test_basketball_api_queda_vira_aviso(self):
+        from collector import api, main as m
+        c = api.Client("k", budget=10, session=self.flaky(99), min_interval=0, sleep=lambda x: None)
+        out = m.run(c, MemoryStore(), {**CFG, "discovery_days_back": 1}, today=date(2026, 11, 15))
+        self.assertIn("instabilidade", out["note"])
+        ok = api.Client("k", budget=10, session=self.flaky(1, ok_body={"data": [], "meta": {}}), min_interval=0, sleep=lambda x: None)
+        self.assertEqual(ok.get("/games"), ([], {}))
+
+
 class BufferTests(unittest.TestCase):
     def test_grava_cada_equipe_uma_vez(self):
         from collector.store import BufferedStore

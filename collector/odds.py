@@ -19,7 +19,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from .api import BudgetExhausted
+from .api import BudgetExhausted, TransientError
 from .apisports import PlanRestricted, QuotaExceeded
 from .store import now_iso
 
@@ -157,6 +157,8 @@ def run_odds(client, store, cfg, now_ts=None):
                               "at": now_ts, "m": m}
     except BudgetExhausted:
         note = note or "orçamento da execução esgotado"
+    except TransientError as e:
+        note = f"instabilidade da API: {e}"[:300]
     except QuotaExceeded as e:
         note = f"cota diária esgotada: {e}"[:300]
         quota["used"] = acfg.get("daily_call_limit", 90)

@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .api import (ApiError, BudgetExhausted, Client, QuotaExceeded,
-                  UpgradeRequired)
+                  TransientError, UpgradeRequired)
 from .model import shape
 from .store import BufferedStore, FirestoreStore, now_iso
 
@@ -268,6 +268,8 @@ def run(client, store, cfg, today=None):
                 summary["backfill"] = backfill_step(client, store, cfg, day)
         except BudgetExhausted:
             summary["note"] = "orçamento da execução esgotado"
+        except TransientError as e:
+            summary["note"] = f"instabilidade da API, coleta parcial: {e}"[:300]
         except QuotaExceeded:
             summary["note"] = "cota diária esgotada no servidor"
             quota["used"] = cfg.get("daily_call_limit", 92)

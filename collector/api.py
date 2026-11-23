@@ -30,6 +30,17 @@ class BudgetExhausted(Exception):
     """Orçamento de chamadas desta execução acabou (controle local)."""
 
 
+class TransientError(Exception):
+    """Instabilidade do servidor ou da rede que persistiu depois das novas tentativas.
+
+    Não é defeito do coletor: a fonte registra o aviso e a execução segue sem marcar falha.
+    """
+
+
+NET_ERRORS = (requests.ConnectionError, requests.Timeout)
+RETRY_WAIT = 15  # segundos entre tentativas depois de queda de conexão ou erro 5xx
+
+
 class Client:
     def __init__(self, key, budget=30, min_interval=6.5, session=None, sleep=time.sleep):
         self.key = key
@@ -53,12 +64,23 @@ class Client:
                 self.sleep(wait)
             self.calls += 1
             self._last = time.monotonic()
-            resp = self.session.get(
-                BASE + path,
-                params={k: v for k, v in (params or {}).items() if v is not None},
-                headers={"Authorization": f"Bearer {self.key}"},
-                timeout=30,
-            )
+            try:
+                resp = self.session.get(
+                    BASE + path,
+                    params={k: v for k, v in (params or {}).items() if v is not None},
+                    headers={"Authorization": f"Bearer {self.key}"},
+                    timeout=30,
+                )
+            except NET_ERRORS as e:
+                if attempt < 2:
+                    self.sleep(RETRY_WAIT * (attempt + 1))
+                    continue
+                raise TransientError(f"Basketball API sem resposta: {e}") from e
+            if resp.status_code >= 500:
+                if attempt < 2:
+                    self.sleep(RETRY_WAIT * (attempt + 1))
+                    continue
+                raise TransientError(f"Basketball API respondeu {resp.status_code}")
             if resp.status_code == 200:
                 body = resp.json()
                 return body.get("data"), body.get("meta") or {}

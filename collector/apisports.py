@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import requests
 
-from .api import BudgetExhausted
+from .api import NET_ERRORS, RETRY_WAIT, BudgetExhausted, TransientError
 from .main import competition_allowed, competition_tier, record_game, scores_match, today_utc
 from .store import now_iso
 
@@ -46,8 +46,19 @@ class Client:
                 self.sleep(wait)
             self.calls += 1
             self._last = time.monotonic()
-            resp = self.session.get(BASE + path, params=params,
-                                    headers={"x-apisports-key": self.key}, timeout=30)
+            try:
+                resp = self.session.get(BASE + path, params=params,
+                                        headers={"x-apisports-key": self.key}, timeout=30)
+            except NET_ERRORS as e:
+                if attempt < 2:
+                    self.sleep(RETRY_WAIT * (attempt + 1))
+                    continue
+                raise TransientError(f"API-Sports sem resposta: {e}") from e
+            if resp.status_code >= 500:
+                if attempt < 2:
+                    self.sleep(RETRY_WAIT * (attempt + 1))
+                    continue
+                raise TransientError(f"API-Sports respondeu {resp.status_code}")
             if resp.status_code == 429 and attempt < 2:
                 self.sleep(20)
                 continue
@@ -266,6 +277,8 @@ def run(client, store, cfg, today=None):
         summary["backfillNew"], summary["backfill"] = backfill(client, store, cfg, today=today)
     except BudgetExhausted:
         summary["note"] = summary["note"] or "orçamento da execução esgotado"
+    except TransientError as e:
+        summary["note"] = f"instabilidade da API, coleta parcial: {e}"[:300]
     except QuotaExceeded as e:
         summary["note"] = f"cota diária esgotada: {e}"[:300]
         quota["used"] = cfg.get("apisports", {}).get("daily_call_limit", 90)
@@ -320,6 +333,8 @@ def run_live(client, store, cfg, today=None, now_ts=None):
             fresh.extend(x for x in (agenda_entry(g, cfg) for g in rows) if x)
     except BudgetExhausted:
         note = note or "orçamento da execução esgotado"
+    except TransientError as e:
+        note = f"instabilidade da API: {e}"[:300]
     except QuotaExceeded as e:
         note = f"cota diária esgotada: {e}"[:300]
         quota["used"] = cfg.get("apisports", {}).get("daily_call_limit", 90)
